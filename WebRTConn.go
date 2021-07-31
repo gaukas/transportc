@@ -1,52 +1,45 @@
-package wdt
+package transportc
+
+import "github.com/pion/webrtc/v3"
 
 // Will be heavily rely on seed2sdp
 
-import (
-	s2s "github.com/Gaukas/seed2sdp"
-)
-
-type WebRTConnRole uint8
-
-const (
-	OFFERER WebRTConnRole = iota
-	ANSWERER
-)
-
-type WebRTConnStatus uint8
-
-const (
-	NEW                         WebRTConnStatus = 0 // NEWly created WebRTConn
-	INIT                        WebRTConnStatus = 1
-	READY                       WebRTConnStatus = 2 // Ready for send/recv
-	CLOSED                      WebRTConnStatus = 4
-	ERRORED                     WebRTConnStatus = 8
-	LOCAL_DESCRIPTION_CREATED   WebRTConnStatus = 16
-	REMOTE_DESCRIPTION_RECEIVED WebRTConnStatus = 32
-)
-
+// A net.Conn compliance struct
 type WebRTConn struct {
-	dataChannel *s2s.DataChannel
+	// states
+	errmsg error
+	role   WebRTCRole
+	status WebRTConnStatus
+
+	// datachannel to net.Conn interface
+	dataChannel *DataChannel
 	recvBuf     chan byte
-	role        WebRTConnRole
-	sendBuf     chan byte
-	Status      WebRTConnStatus
+	// sendBuf     chan byte // Shouldn't be needed
 }
 
 // NewWebRTConn() creates a new WebRTConn instance and returns a pointer to it.
-func NewWebRTConn(s2sconfig *s2s.DataChannelConfig) *WebRTConn {
-	newDataChannel := s2s.DeclareDatachannel(s2sconfig)
+func NewWebRTConn(dcconfig *DataChannelConfig, pionSE webrtc.SettingEngine, pionConf webrtc.Configuration) *WebRTConn {
+	newDataChannel := DeclareDatachannel(dcconfig, pionSE, pionConf)
 
 	newRole := OFFERER
-	if s2sconfig.SelfSDPType == "answer" {
+	if dcconfig.SelfSDPType == "answer" {
 		newRole = ANSWERER
 	}
 
 	return &WebRTConn{
+		errmsg: nil,
+		role:   newRole,
+		status: WebRTConnNew,
+
 		dataChannel: newDataChannel,
 		recvBuf:     make(chan byte),
-		role:        newRole,
-		sendBuf:     make(chan byte),
-		Status:      NEW,
+		// sendBuf: make(chan byte),
 	}
+}
+
+// Init() setup the underlying datachannel with everything defined in c.dataChannel.
+// once Init() is called upon a WebRTConn, it would be YAY or NAY only then
+// i.e. No more configurablility.
+func (c *WebRTConn) Init() {
+
 }

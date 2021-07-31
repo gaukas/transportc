@@ -1,2 +1,3 @@
 # webrtc-datachannel-transport
-A transport utilizing WebRTC data channels, written in Go.
+
+A virtual transport implemented using WebRTC datachannel written in Go. 
