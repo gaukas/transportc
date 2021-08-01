@@ -1,7 +1,7 @@
 package transportc
 
 import (
-	"errors"
+	"encoding/json"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -82,57 +82,17 @@ func (d *DataChannel) CreateLocalDescription() error {
 	return nil
 }
 
-func (d *DataChannel) CreateOffer() error {
-	if d.config.SelfSDPType == "offer" {
-		return d.CreateLocalDescription()
-	}
-	return errors.New("Mismatched SelfSDPType in config: " + d.config.SelfSDPType)
-}
-
-func (d *DataChannel) CreateAnswer() error {
-	if d.config.SelfSDPType == "answer" {
-		return d.CreateLocalDescription()
-	}
-	return errors.New("Mismatched SelfSDPType in config: " + d.config.SelfSDPType)
-}
-
 func (d *DataChannel) GetLocalDescription() *webrtc.SessionDescription {
 	return d.WebRTCPeerConnection.LocalDescription()
 }
 
-func (d *DataChannel) SetRemoteDescription(remoteCandidates []ICECandidate) error {
-	peerFp, _ := PredictDTLSFingerprint(d.config.PeerHkdfParams)
-	peerICE, _ := PredictIceParameters(d.config.PeerHkdfParams)
-
-	RemoteSDP := SDP{
-		SDPType:       d.config.PeerSDPType(),
-		Malleables:    SDPMalleablesFromSeed(d.config.PeerHkdfParams),
-		Medias:        d.config.PeerMedias,
-		Attributes:    d.config.PeerAttributes,
-		Fingerprint:   peerFp,
-		IceParams:     peerICE,
-		IceCandidates: remoteCandidates,
-	}
-
+func (d *DataChannel) SetRemoteDescription(remoteSDP string) error {
 	rdesc := webrtc.SessionDescription{}
-	FromJSON(RemoteSDP.String(), &rdesc)
-
-	err := d.WebRTCPeerConnection.SetRemoteDescription(rdesc)
-	return err
-}
-
-func (d *DataChannel) SetOffer(remoteCandidates []ICECandidate) error {
-	if d.config.SelfSDPType == "answer" {
-		return d.SetRemoteDescription(remoteCandidates)
+	err := json.Unmarshal([]byte(remoteSDP), &rdesc)
+	if err != nil {
+		return err
 	}
-	return errors.New("SelfSDPType in config: " + d.config.SelfSDPType + " can't set offer.")
-}
-
-func (d *DataChannel) SetAnswer(remoteCandidates []ICECandidate) error {
-	if d.config.SelfSDPType == "offer" {
-		return d.SetRemoteDescription(remoteCandidates)
-	}
-	return errors.New("SelfSDPType in config: " + d.config.SelfSDPType + " can't set answer.")
+	return d.WebRTCPeerConnection.SetRemoteDescription(rdesc)
 }
 
 // SettingEngine utilization

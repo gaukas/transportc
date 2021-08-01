@@ -1,15 +1,21 @@
 package transportc
 
-import "github.com/pion/webrtc/v3"
+import (
+	"sync"
+
+	"github.com/pion/webrtc/v3"
+)
 
 // Will be heavily rely on seed2sdp
 
 // A net.Conn compliance struct
 type WebRTConn struct {
+	// mutex
+	lock sync.RWMutex
 	// states
-	errmsg error
-	role   WebRTCRole
-	status WebRTConnStatus
+	lasterr error
+	role    WebRTCRole
+	status  WebRTConnStatus
 
 	// datachannel to net.Conn interface
 	dataChannel *DataChannel
@@ -18,18 +24,21 @@ type WebRTConn struct {
 }
 
 // NewWebRTConn() creates a new WebRTConn instance and returns a pointer to it.
-func NewWebRTConn(dcconfig *DataChannelConfig, pionSE webrtc.SettingEngine, pionConf webrtc.Configuration) *WebRTConn {
-	newDataChannel := DeclareDatachannel(dcconfig, pionSE, pionConf)
+func NewWebRTConn(dcconfig *DataChannelConfig, pionSettingEngine webrtc.SettingEngine, pionConfiguration webrtc.Configuration) *WebRTConn {
+	newDataChannel := DeclareDatachannel(dcconfig, pionSettingEngine, pionConfiguration)
 
-	newRole := OFFERER
+	var newRole WebRTCRole
 	if dcconfig.SelfSDPType == "answer" {
 		newRole = ANSWERER
+	} else {
+		newRole = OFFERER
 	}
 
 	return &WebRTConn{
-		errmsg: nil,
-		role:   newRole,
-		status: WebRTConnNew,
+		lock:    sync.RWMutex{},
+		lasterr: nil,
+		role:    newRole,
+		status:  WebRTConnNew,
 
 		dataChannel: newDataChannel,
 		recvBuf:     make(chan byte),
