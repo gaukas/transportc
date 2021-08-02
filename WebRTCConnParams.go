@@ -1,7 +1,5 @@
 package transportc
 
-import "errors"
-
 type WebRTCRole uint8
 
 const (
@@ -21,8 +19,4 @@ const (
 	WebRTConnRemoteSDPReceived WebRTConnStatus = 1 << 5
 )
 
-var (
-	ErrWebRTCUnsupportedNetwork = errors.New("ERR_WEBRTCONN_NETWORK_UNSUPPORTED")
-	ErrWebRTConnReinit          = errors.New("ERR_WEBRTCONN_DOUBLE_INIT")
-	ErrWebRTConnReadIntegrity   = errors.New("ERR_WEBRTCONN_READ_INTEGRITY_FAILURE")
-)
+var ()
