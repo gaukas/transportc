@@ -1,8 +1,6 @@
 package transportc
 
 import (
-	"encoding/json"
-
 	"github.com/pion/webrtc/v3"
 )
 
@@ -23,7 +21,7 @@ type DataChannel struct {
 
 // DeclareDatachannel sets all the predetermined information needed to establish Peer Connection.
 func DeclareDatachannel(dcconfig *DataChannelConfig, pionSettingEngine webrtc.SettingEngine, pionConfiguration webrtc.Configuration) *DataChannel {
-	if dcconfig.SendBufferSize < DataChannelBufferSizeMin {
+	if dcconfig.SendBufferSize > 0 && dcconfig.SendBufferSize < DataChannelBufferSizeMin {
 		dcconfig.SendBufferSize = DataChannelBufferSizeDefault
 	}
 
@@ -63,7 +61,8 @@ func (d *DataChannel) CreateLocalDescription() error {
 	}
 
 	if err != nil {
-		panic(err)
+		// panic(err) // not safe for release
+		return err
 	}
 
 	// Create channel that is blocked until ICE Gathering is complete
@@ -72,7 +71,8 @@ func (d *DataChannel) CreateLocalDescription() error {
 	// Sets the LocalDescription, and starts our UDP listeners
 	err = d.WebRTCPeerConnection.SetLocalDescription(localDescription)
 	if err != nil {
-		panic(err)
+		// panic(err) // not safe for release
+		return err
 	}
 
 	// Block until ICE Gathering is complete, disabling trickle ICE
@@ -86,37 +86,28 @@ func (d *DataChannel) GetLocalDescription() *webrtc.SessionDescription {
 	return d.WebRTCPeerConnection.LocalDescription()
 }
 
-func (d *DataChannel) SetRemoteDescription(remoteSDP string) error {
-	rdesc := webrtc.SessionDescription{}
-	err := json.Unmarshal([]byte(remoteSDP), &rdesc)
-	if err != nil {
-		return err
-	}
-	return d.WebRTCPeerConnection.SetRemoteDescription(rdesc)
+func (d *DataChannel) SetRemoteDescription(remoteSDP *webrtc.SessionDescription) error {
+	// rdesc := webrtc.SessionDescription{}
+	// err := json.Unmarshal([]byte(remoteSDP), &rdesc)
+	// if err != nil {
+	// 	return err
+	// }
+	return d.WebRTCPeerConnection.SetRemoteDescription(*remoteSDP)
 }
 
-// SettingEngine utilization
+// SettingEngine helper
 
-// SetPort sets the port for candidates. (For both Host's port and Srflx's local port)
-func (d *DataChannel) SetPort(port uint16) *DataChannel {
-	if d.WebRTCSettingEngine.SetEphemeralUDPPortRange(port, port) != nil {
-		return nil
-	}
+// SetIP() specifies a list of IPs to use for local ICE candidates.
+// The first input parameter should be a slice of strings while each string is an IP address.
+// The second input parameter should be a webrtc.ICECandidateType
+func (d *DataChannel) SetIP(ips []string, iptype webrtc.ICECandidateType) *DataChannel {
+	d.WebRTCSettingEngine.SetNAT1To1IPs(ips, iptype)
 	return d
 }
 
-// SetIP sets IP for ICE agents to treat as 1 to 1 IPs
-// ips: list of IP in string
-// iptype: Host (if full 1-to-1 DNAT), Srflx (if behind a NAT)
-func (d *DataChannel) SetIP(ips []string, iptype ICECandidateType) *DataChannel {
-	switch iptype {
-	case Host:
-		d.WebRTCSettingEngine.SetNAT1To1IPs(ips, webrtc.ICECandidateTypeHost)
-		break
-	case Srflx:
-		d.WebRTCSettingEngine.SetNAT1To1IPs(ips, webrtc.ICECandidateTypeSrflx)
-		break
-	default:
+// SetPort sets the port for candidates. (For both Host's port and Srflx's LOCAL port)
+func (d *DataChannel) SetPort(port uint16) *DataChannel {
+	if d.WebRTCSettingEngine.SetEphemeralUDPPortRange(port, port) != nil {
 		return nil
 	}
 	return d
@@ -150,13 +141,13 @@ func (d *DataChannel) SetDTLSPassive() *DataChannel {
 
 // ReadyToSend() when Data Channal is opened and is not exceeding the bytes limit.
 func (d *DataChannel) ReadyToSend() bool {
-	return (d.WebRTCDataChannel.ReadyState() == webrtc.DataChannelStateOpen) && (d.WebRTCDataChannel.BufferedAmount() < d.config.TxBufferSize)
+	return (d.WebRTCDataChannel.ReadyState() == webrtc.DataChannelStateOpen) && (d.config.SendBufferSize == 0 || d.WebRTCDataChannel.BufferedAmount() < d.config.SendBufferSize)
 }
 
 // Send []byte object via Data Channel
 func (d *DataChannel) Send(data []byte) error {
 	if d.WebRTCDataChannel.ReadyState() == webrtc.DataChannelStateOpen {
-		if d.WebRTCDataChannel.BufferedAmount() >= DataChannelBufferBytesLim {
+		if d.config.SendBufferSize > 0 && d.WebRTCDataChannel.BufferedAmount() >= d.config.SendBufferSize {
 			return ErrDataChannelAtCapacity
 		}
 		return d.WebRTCDataChannel.Send(data)

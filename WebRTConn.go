@@ -41,14 +41,7 @@ func NewWebRTConn(dcconfig *DataChannelConfig, pionSettingEngine webrtc.SettingE
 		status:  WebRTConnNew,
 
 		dataChannel: newDataChannel,
-		recvBuf:     make(chan byte),
+		recvBuf:     make(chan byte), // Thread-Safe?
 		// sendBuf: make(chan byte),
 	}
-}
-
-// Init() setup the underlying datachannel with everything defined in c.dataChannel.
-// once Init() is called upon a WebRTConn, it would be YAY or NAY only then
-// i.e. No more configurablility.
-func (c *WebRTConn) Init() {
-
 }
