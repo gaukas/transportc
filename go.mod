@@ -1,4 +1,4 @@
-module example.com/transportc
+module github.com/Gaukas/transportc
 
 go 1.16
 
