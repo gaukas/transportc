@@ -159,7 +159,10 @@ func (d *DataChannel) Send(data []byte) error {
 }
 
 // Close() ends Data Channel and Peer Connection
-func (d *DataChannel) Close() {
-	d.WebRTCDataChannel.Close()
-	d.WebRTCPeerConnection.Close()
+func (d *DataChannel) Close() error {
+	err := d.WebRTCDataChannel.Close()
+	if err != nil {
+		return err
+	}
+	return d.WebRTCPeerConnection.Close()
 }
