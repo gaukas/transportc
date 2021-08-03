@@ -6,11 +6,6 @@ import (
 
 // Design adapted from github.com/Gaukas/seed2sdp
 
-const (
-	DataChannelBufferSizeDefault uint64 = 1024 * 1024 // Default Buffer Size: 1MB
-	DataChannelBufferSizeMin     uint64 = 1024        // 1KB buffer could be too small...
-)
-
 type DataChannel struct {
 	config               *DataChannelConfig // Config including
 	WebRTCSettingEngine  webrtc.SettingEngine

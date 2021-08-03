@@ -1,5 +1,10 @@
 package transportc
 
+const (
+	DataChannelBufferSizeDefault uint64 = 1024 * 1024 // Default Buffer Size: 1MB
+	DataChannelBufferSizeMin     uint64 = 1024        // 1KB buffer could be too small...
+)
+
 type DataChannelConfig struct {
 	Label       string // Name of DataChannel instance.
 	SelfSDPType string // "offer", "answer"

@@ -22,7 +22,8 @@ const (
 )
 
 var (
-	ErrWebRTCUnsupportedNetwork = errors.New("ERR_WEBRTCONN_NETWORK_UNSUPPORTED")
-	ErrWebRTConnReinit          = errors.New("ERR_WEBRTCONN_DOUBLE_INIT")
-	ErrWebRTConnReadIntegrity   = errors.New("ERR_WEBRTCONN_READ_INTEGRITY_FAILURE")
+	ErrWebRTCUnsupportedNetwork  = errors.New("ERR_WEBRTCONN_NETWORK_UNSUPPORTED")
+	ErrWebRTConnReinit           = errors.New("ERR_WEBRTCONN_DOUBLE_INIT")
+	ErrWebRTConnReadIntegrity    = errors.New("ERR_WEBRTCONN_READ_INTEGRITY_FAILURE")
+	ErrWebRTConnOfferNotReceived = errors.New("ERR_WEBRTCONN_OFFER_NOT_RECEIVED")
 )

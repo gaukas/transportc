@@ -31,9 +31,13 @@ func (c *WebRTConn) setDataChannelEvtHandler() {
 	})
 
 	c.dataChannel.WebRTCDataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+		defer c.lock.Unlock()
+		c.lock.Lock()
+		// fmt.Printf("OnMsg: %s! c.recvBuf prev len: %d\n", string(msg.Data), len(*c.recvBuf))
 		for _, b := range msg.Data {
-			c.recvBuf <- b // all into channel, assuming Thread-Safe
+			*c.recvBuf <- b // all into channel, assuming Thread-Safe
 		}
+		// fmt.Printf("c.recvBuf new len: %d\n", len(*c.recvBuf))
 		// fmt.Printf("[Comm] %s: '%s'\n", dataChannel.WebRTCDataChannel.Label(), string(msg.Data))
 	})
 
@@ -73,7 +77,8 @@ func (c *WebRTConn) Init(dcconfig *DataChannelConfig, pionSettingEngine webrtc.S
 	}
 
 	c.dataChannel = DeclareDatachannel(dcconfig, pionSettingEngine, pionConfiguration)
-	c.recvBuf = make(chan byte)
+	tmpchan := make(chan byte, 1000)
+	c.recvBuf = &tmpchan
 
 	// defer c.lock.Unlock()
 	// c.lock.Lock()
@@ -110,12 +115,26 @@ func (c *WebRTConn) Init(dcconfig *DataChannelConfig, pionSettingEngine webrtc.S
 	return nil
 }
 
-func (c *WebRTConn) LocalSDP() *webrtc.SessionDescription {
-	return c.dataChannel.GetLocalDescription()
+func (c *WebRTConn) LocalSDP() (*webrtc.SessionDescription, error) {
+	if (c.status & WebRTConnLocalSDPReady) == 0 { // Not generated yet
+		if (c.role == ANSWERER) && ((c.status & WebRTConnRemoteSDPReceived) == 0) {
+			return nil, ErrWebRTConnOfferNotReceived // Answerer shall wait until Offer received.
+		}
+		err := c.dataChannel.CreateLocalDescription()
+		if err != nil {
+			return nil, err
+		}
+		c.status |= WebRTConnLocalSDPReady
+	}
+	return c.dataChannel.GetLocalDescription(), nil
 }
 
 func (c *WebRTConn) LocalSDPJsonString() (string, error) {
-	sdp, err := json.Marshal(c.LocalSDP())
+	lsdp, err := c.LocalSDP()
+	if err != nil {
+		return "", err
+	}
+	sdp, err := json.Marshal(lsdp)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +142,12 @@ func (c *WebRTConn) LocalSDPJsonString() (string, error) {
 }
 
 func (c *WebRTConn) SetRemoteSDP(sdp *webrtc.SessionDescription) error {
-	return c.dataChannel.SetRemoteDescription(sdp)
+	err := c.dataChannel.SetRemoteDescription(sdp)
+	if err != nil {
+		return err
+	}
+	c.status |= WebRTConnRemoteSDPReceived
+	return nil
 }
 
 func (c *WebRTConn) SetRemoteSDPJsonString(sdp string) error {

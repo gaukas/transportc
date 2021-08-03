@@ -19,7 +19,7 @@ type WebRTConn struct {
 
 	// datachannel to net.Conn interface
 	dataChannel *DataChannel
-	recvBuf     chan byte
+	recvBuf     *(chan byte)
 	// sendBuf     chan byte // Shouldn't be needed
 
 	// net.Conn support, not meaningful at current phase
@@ -45,23 +45,21 @@ func Dial(network, address string) (WebRTConn, error) {
 
 // Read() reads from recvBuf as the byte channel.
 func (c WebRTConn) Read(b []byte) (n int, err error) {
-	n = len(c.recvBuf)
+	defer c.lock.Unlock()
+	c.lock.Lock()
+	n = len(*c.recvBuf)
 	err = nil
 
-	oldlenb := len(b)
-
-	for i := 0; i < n; i++ {
-		nextbyte := <-c.recvBuf
-		b = append(b, nextbyte)
+	var i int
+	for i = 0; i < n && i < len(b); i++ {
+		nextbyte := <-*c.recvBuf
+		// fmt.Printf("Byte read: %d\n", nextbyte)
+		b[i] = nextbyte
 	}
-
-	newlenb := len(b)
-
-	if newlenb-oldlenb != n {
-		err = ErrWebRTConnReadIntegrity // dataloss?
-	}
-
-	return n, err
+	// if i > 0 {
+	// 	fmt.Printf("Returning i:%d", i)
+	// }
+	return i, err
 }
 
 // Write() send bytes over DataChannel.
