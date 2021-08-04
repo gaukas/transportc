@@ -19,7 +19,7 @@ type WebRTConn struct {
 
 	// datachannel to net.Conn interface
 	dataChannel *DataChannel
-	recvBuf     *(chan byte)
+	recvBuf     *([]byte)
 	// sendBuf     chan byte // Shouldn't be needed
 
 	// net.Conn support, not meaningful at current phase
@@ -52,7 +52,8 @@ func (c WebRTConn) Read(b []byte) (n int, err error) {
 
 	var i int
 	for i = 0; i < n && i < len(b); i++ {
-		nextbyte := <-*c.recvBuf
+		nextbyte := (*c.recvBuf)[0]
+		*c.recvBuf = (*c.recvBuf)[1:]
 		// fmt.Printf("Byte read: %d\n", nextbyte)
 		b[i] = nextbyte
 	}

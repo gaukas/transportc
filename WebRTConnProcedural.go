@@ -34,9 +34,14 @@ func (c *WebRTConn) setDataChannelEvtHandler() {
 		defer c.lock.Unlock()
 		c.lock.Lock()
 		// fmt.Printf("OnMsg: %s! c.recvBuf prev len: %d\n", string(msg.Data), len(*c.recvBuf))
-		for _, b := range msg.Data {
-			*c.recvBuf <- b // all into channel, assuming Thread-Safe
-		}
+
+		// POTENTIAL DIRTY IMPLEMENTATION, DEPRECATED
+		// for _, b := range msg.Data {
+		// 	*c.recvBuf <- b // all into channel, assuming Thread-Safe
+		// }
+
+		*c.recvBuf = append(*c.recvBuf, msg.Data...)
+
 		// fmt.Printf("c.recvBuf new len: %d\n", len(*c.recvBuf))
 		// fmt.Printf("[Comm] %s: '%s'\n", dataChannel.WebRTCDataChannel.Label(), string(msg.Data))
 	})
@@ -77,7 +82,9 @@ func (c *WebRTConn) Init(dcconfig *DataChannelConfig, pionSettingEngine webrtc.S
 	}
 
 	c.dataChannel = DeclareDatachannel(dcconfig, pionSettingEngine, pionConfiguration)
-	tmpchan := make(chan byte, 1000)
+
+	// POTENTIAL DIRTY CODE
+	tmpchan := []byte{}
 	c.recvBuf = &tmpchan
 
 	// defer c.lock.Unlock()
