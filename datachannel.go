@@ -34,6 +34,13 @@ func DeclareDatachannel(dcconfig *DataChannelConfig, pionSettingEngine webrtc.Se
 // Initialize the DataChannel instance. From now on the SettingEngine functions will be no longer effective.
 func (d *DataChannel) Initialize() error {
 	var err error
+	if len(d.config.IPAddr) > 0 {
+		d.SetIP(d.config.IPAddr, d.config.CandidateType)
+	}
+	if d.config.Port > 0 {
+		d.SetPort(d.config.Port)
+	}
+
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(d.WebRTCSettingEngine))
 	d.WebRTCPeerConnection, err = api.NewPeerConnection(d.WebRTCConfiguration)
 	if err != nil {
