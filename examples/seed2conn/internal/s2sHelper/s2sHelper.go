@@ -12,15 +12,15 @@ const (
 	AnswererIdentifier       string = "rewsnA"
 )
 
-var hkdfOffer = s2s.NewHKDFParams().SetSecret(ServerClientSharedSecret).SetInfoPrefix(OffererIdentifier)
-var hkdfAnswer = s2s.NewHKDFParams().SetSecret(ServerClientSharedSecret).SetInfoPrefix(AnswererIdentifier)
+var HkdfOffer = s2s.NewHKDFParams().SetSecret(ServerClientSharedSecret).SetInfoPrefix(OffererIdentifier)
+var HkdfAnswer = s2s.NewHKDFParams().SetSecret(ServerClientSharedSecret).SetInfoPrefix(AnswererIdentifier)
 
 func InflateSdpWithSeed(seed string, deflatedSDP s2s.SDPDeflated) (*s2s.SDP, error) {
 	var hkdfParams *s2s.HKDFParams
 	if deflatedSDP.SDPType == s2s.SDPOffer {
-		hkdfParams = hkdfOffer.SetSalt(seed)
+		hkdfParams = HkdfOffer.SetSalt(seed)
 	} else if deflatedSDP.SDPType == s2s.SDPAnswer {
-		hkdfParams = hkdfAnswer.SetSalt(seed)
+		hkdfParams = HkdfAnswer.SetSalt(seed)
 	}
 	sdp, err := deflatedSDP.Inflate()
 	if err != nil {
@@ -42,9 +42,10 @@ func InflateSdpWithSeed(seed string, deflatedSDP s2s.SDPDeflated) (*s2s.SDP, err
 	return sdp, nil
 }
 
+// CreateSdpWithSeed() predicts Answer Only!!
 func CreateSdpWithSeed(seed string, serverHostIP net.IP, serverPort uint16) (*s2s.SDP, error) {
 	var err error
-	hkdfParams := hkdfAnswer.SetSalt(seed)
+	hkdfParams := HkdfAnswer.SetSalt(seed)
 
 	rtpCandidate := s2s.ICECandidate{}
 	rtpCandidate.SetComponent(s2s.ICEComponentRTP)
