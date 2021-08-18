@@ -27,8 +27,10 @@ type WebRTConn struct {
 	remoteAddr PeerAddr
 }
 
+// Dial() creates the WebRTConn{} instance and assign a rwlock to it.
 func Dial(network, address string) (WebRTConn, error) {
 	return WebRTConn{
+		lock:   &sync.RWMutex{},
 		status: WebRTConnNew,
 		localAddr: PeerAddr{
 			NetworkType: "udp",

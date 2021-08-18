@@ -2,7 +2,6 @@ package transportc
 
 import (
 	"encoding/json"
-	"sync"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -73,7 +72,6 @@ func (c *WebRTConn) Init(dcconfig *DataChannelConfig, pionSettingEngine webrtc.S
 		return ErrWebRTConnReinit
 	}
 
-	c.lock = &sync.RWMutex{}
 	c.lasterr = nil
 	if dcconfig.SelfSDPType == "answer" {
 		c.role = ANSWERER
