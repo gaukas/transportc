@@ -114,8 +114,7 @@ func main() {
 	s2sHelper.InjectAppSpecs(remoteSdp)
 	remoteSdp.AddAttrs(s2s.SDPAttribute{
 		Key:   "setup",
-		Value: "actpass", // Uncomment this line, if server calls SetDTLSActive() or by default
-		// Value: "passive", // Uncomment this line, if server calls SetDTLSPassive()
+		Value: "actpass", // client usually generates actpass.
 	})
 
 	// logger.Printf("Inflated Offer:\n%s\n", remoteSdp.String())
