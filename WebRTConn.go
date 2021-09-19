@@ -28,7 +28,7 @@ type WebRTConn struct {
 }
 
 // Dial() creates the WebRTConn{} instance and assign a rwlock to it.
-func Dial(network, address string) (WebRTConn, error) {
+func Dial(_, _ string) (WebRTConn, error) {
 	return WebRTConn{
 		lock:   &sync.RWMutex{},
 		status: WebRTConnNew,
@@ -89,16 +89,16 @@ func (c WebRTConn) RemoteAddr() net.Addr {
 }
 
 // Unimplemented
-func (c WebRTConn) SetDeadline(t time.Time) error {
+func (c WebRTConn) SetDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }
 
 // Unimplemented
-func (c WebRTConn) SetReadDeadline(t time.Time) error {
+func (c WebRTConn) SetReadDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }
 
 // Unimplemented
-func (c WebRTConn) SetWriteDeadline(t time.Time) error {
+func (c WebRTConn) SetWriteDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }

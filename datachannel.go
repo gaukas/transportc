@@ -50,7 +50,7 @@ func (d *DataChannel) Initialize() error {
 	if d.config.SelfSDPType == "offer" {
 		d.WebRTCDataChannel, err = d.WebRTCPeerConnection.CreateDataChannel(d.config.Label, nil)
 	}
-	return nil
+	return err
 }
 
 func (d *DataChannel) CreateLocalDescription() error {

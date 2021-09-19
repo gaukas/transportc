@@ -34,7 +34,7 @@ func TestDial(t *testing.T) {
 	}
 }
 
-func TestInit(t *testing.T) {
+func TestInit(t *testing.T) { // skipcq: RVV-B0001
 	conn, _ := Dial("udp", "0.0.0.0")
 	err := testInit(&conn, "offer")
 	if err != nil {
