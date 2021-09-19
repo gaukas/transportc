@@ -1,6 +1,9 @@
 package transportc
 
 import (
+	"net"
+
+	"github.com/pion/ice/v2"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -29,6 +32,16 @@ func DeclareDatachannel(dcconfig *DataChannelConfig, pionSettingEngine webrtc.Se
 		// WebRTCDataChannel: nil,
 	}
 	return &dataChannel
+}
+
+// UseRawSocket utilizes webrtc.SettingEngine.SetICEUDPMux() and webrtc.NewICEUDPMux to employ a raw socket for the PeerConnection
+func (d *DataChannel) UseRawSocket(rawsocket *net.UDPConn) {
+	d.WebRTCSettingEngine.SetICEUDPMux(webrtc.NewICEUDPMux(nil, rawsocket))
+}
+
+// UseUDPMux utilizes webrtc.SettingEngine.SetICEUDPMux() to employ a UDPMux for the PeerConnection
+func (d *DataChannel) UseUDPMux(mux ice.UDPMux) {
+	d.WebRTCSettingEngine.SetICEUDPMux(mux)
 }
 
 // Initialize the DataChannel instance. From now on the SettingEngine functions will be no longer effective.
