@@ -87,7 +87,7 @@ func (c *WebRTConn) Init(dcconfig *DataChannelConfig, pionSettingEngine webrtc.S
 
 	// defer c.lock.Unlock()
 	// c.lock.Lock()
-	err := c.dataChannel.Initialize()
+	err := c.dataChannel.Initialize() // After this line, no change made to pionSettingEngine or pionConfiguration will be effective.
 	if err != nil {
 		return err
 	}

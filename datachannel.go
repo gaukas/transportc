@@ -31,6 +31,18 @@ func DeclareDatachannel(dcconfig *DataChannelConfig, pionSettingEngine webrtc.Se
 		// WebRTCPeerConnection: nil,
 		// WebRTCDataChannel: nil,
 	}
+
+	if dcconfig.SelfSDPType == "answer" {
+		if dcconfig.AnswererType == "active" {
+			dataChannel.SetDTLSActive()
+		} else if dcconfig.AnswererType == "passive" {
+			dataChannel.SetDTLSPassive()
+		}
+	}
+
+	if dcconfig.RawSocket != nil {
+		dataChannel.UseRawSocket(dcconfig.RawSocket)
+	}
 	return &dataChannel
 }
 

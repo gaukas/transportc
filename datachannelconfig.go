@@ -1,6 +1,10 @@
 package transportc
 
-import "github.com/pion/webrtc/v3"
+import (
+	"net"
+
+	"github.com/pion/webrtc/v3"
+)
 
 const (
 	DataChannelBufferSizeDefault uint64 = 1024 * 1024 // Default Buffer Size: 1MB
@@ -17,6 +21,10 @@ type DataChannelConfig struct {
 	IPAddr        []string
 	CandidateType webrtc.ICECandidateType
 	Port          uint16
+	AnswererType  string // "active", "passive". Only valid when SelfSDPType == "answer"
+
+	// Enhanced Features Under Test, just wrapper
+	RawSocket *net.UDPConn
 }
 
 func (dcc DataChannelConfig) PeerSDPType() string {
