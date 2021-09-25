@@ -20,7 +20,7 @@ func (c *WebRTConn) LastError() error {
 	return err
 }
 
-// setEvtHandler() can't be called until c.dataChannel.WebRTCDataChannel has been pointed to a valid webrtc.DataChannel
+// setDataChannelEvtHandler() can't be called until c.dataChannel.WebRTCDataChannel has been pointed to a valid webrtc.DataChannel
 func (c *WebRTConn) setDataChannelEvtHandler() {
 	c.dataChannel.WebRTCDataChannel.OnOpen(func() {
 		// fmt.Printf("[Info] Successfully opened Data Channel '%s'-'%d'. \n", dataChannel.WebRTCDataChannel.Label(), dataChannel.WebRTCDataChannel.ID())
