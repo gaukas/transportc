@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// Will be heavily rely on seed2sdp
-
-// A net.Conn compliance struct
+// *WebRTConn (vs. WebRTConn) implements net.Conn!
 type WebRTConn struct {
 	// mutex
 	lock *sync.RWMutex
@@ -28,8 +26,8 @@ type WebRTConn struct {
 }
 
 // Dial() creates the WebRTConn{} instance and assign a rwlock to it.
-func Dial(_, _ string) (WebRTConn, error) {
-	return WebRTConn{
+func Dial(_, _ string) (*WebRTConn, error) {
+	return &WebRTConn{
 		lock:   &sync.RWMutex{},
 		status: WebRTConnNew,
 		localAddr: PeerAddr{
@@ -46,7 +44,7 @@ func Dial(_, _ string) (WebRTConn, error) {
 }
 
 // Read() reads from recvBuf as the byte channel.
-func (c WebRTConn) Read(b []byte) (n int, err error) {
+func (c *WebRTConn) Read(b []byte) (n int, err error) {
 	defer c.lock.Unlock()
 	c.lock.Lock()
 	n = len(*c.recvBuf)
@@ -66,7 +64,7 @@ func (c WebRTConn) Read(b []byte) (n int, err error) {
 }
 
 // Write() send bytes over DataChannel.
-func (c WebRTConn) Write(b []byte) (n int, err error) {
+func (c *WebRTConn) Write(b []byte) (n int, err error) {
 	// Won't implement timeout for now
 	n = len(b)
 	err = c.dataChannel.Send(b)
@@ -76,29 +74,29 @@ func (c WebRTConn) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
-func (c WebRTConn) Close() error {
+func (c *WebRTConn) Close() error {
 	return c.dataChannel.Close()
 }
 
-func (c WebRTConn) LocalAddr() net.Addr {
+func (c *WebRTConn) LocalAddr() net.Addr {
 	return c.localAddr
 }
 
-func (c WebRTConn) RemoteAddr() net.Addr {
+func (c *WebRTConn) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
 
 // Unimplemented
-func (c WebRTConn) SetDeadline(_ time.Time) error { // skipcq: RVV-B0013
+func (c *WebRTConn) SetDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }
 
 // Unimplemented
-func (c WebRTConn) SetReadDeadline(_ time.Time) error { // skipcq: RVV-B0013
+func (c *WebRTConn) SetReadDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }
 
 // Unimplemented
-func (c WebRTConn) SetWriteDeadline(_ time.Time) error { // skipcq: RVV-B0013
+func (c *WebRTConn) SetWriteDeadline(_ time.Time) error { // skipcq: RVV-B0013
 	return nil
 }

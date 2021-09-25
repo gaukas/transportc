@@ -36,7 +36,7 @@ func TestDial(t *testing.T) {
 
 func TestInit(t *testing.T) { // skipcq: RVV-B0001
 	conn, _ := Dial("udp", "0.0.0.0")
-	err := testInit(&conn, "offer")
+	err := testInit(conn, "offer")
 	if err != nil {
 		t.Fatalf("Init(): %s\n", err)
 	}
@@ -46,8 +46,8 @@ func TestCommunication(t *testing.T) {
 	pingConn, _ := Dial("udp", "0.0.0.0")
 	pongConn, _ := Dial("udp", "0.0.0.0")
 
-	testInit(&pingConn, "offer")
-	testInit(&pongConn, "answer")
+	testInit(pingConn, "offer")
+	testInit(pongConn, "answer")
 
 	// Set Offer on Answerer.
 	sdpOffer, pingErr := pingConn.LocalSDP()
