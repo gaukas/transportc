@@ -10,4 +10,5 @@ var (
 	ErrWebRTConnReinit           = errors.New("transportc: double init")
 	ErrWebRTConnReadIntegrity    = errors.New("transportc: webrtconn read integrity check failed")
 	ErrWebRTConnOfferNotReceived = errors.New("transportc: offer not yet received by answerer")
+	ErrDeadlinePast              = errors.New("transportc: cannot set deadline in the past")
 )

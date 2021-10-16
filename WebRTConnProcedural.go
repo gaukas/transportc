@@ -17,6 +17,8 @@ func (c *WebRTConn) LastError() error {
 	defer c.lock.RUnlock()
 	c.lock.RLock()
 	err := c.lasterr
+	c.lasterr = nil
+	c.status ^= WebRTConnErrored
 	return err
 }
 
