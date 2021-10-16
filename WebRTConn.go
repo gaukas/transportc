@@ -52,24 +52,34 @@ func (c *WebRTConn) _read(ctx context.Context, b []byte) (n int, err error) {
 	c.lock.Lock()
 	n = len(*c.recvBuf)
 	err = nil
-
 	var i int
-	for i = 0; i < n && i < len(b); i++ {
-		nextbyte := (*c.recvBuf)[0]
-		*c.recvBuf = (*c.recvBuf)[1:]
-		// fmt.Printf("Byte read: %d\n", nextbyte)
-		b[i] = nextbyte
-	}
+	readDone := make(chan int)
 
-	if c.status&WebRTConnClosed > 0 {
-		err = ErrDataChannelClosed
-	} else if c.status&WebRTConnErrored > 0 {
-		err = c.lasterr
-		c.lasterr = nil
-		c.status ^= WebRTConnErrored
-	}
+	go func() {
+		for i = 0; i < n && i < len(b); i++ {
+			nextbyte := (*c.recvBuf)[0]
+			*c.recvBuf = (*c.recvBuf)[1:]
+			// fmt.Printf("Byte read: %d\n", nextbyte)
+			b[i] = nextbyte
+		}
 
-	return i, err
+		if c.status&WebRTConnClosed > 0 {
+			err = ErrDataChannelClosed
+		} else if c.status&WebRTConnErrored > 0 {
+			err = c.lasterr
+			c.lasterr = nil
+			c.status ^= WebRTConnErrored
+		}
+
+		readDone <- i
+	}()
+
+	select {
+	case i = <-readDone:
+		return i, err
+	case <-ctx.Done():
+		return i, ctx.Err()
+	}
 }
 
 // Read() reads from recvBuf as the byte channel.
@@ -85,11 +95,22 @@ func (c *WebRTConn) Read(b []byte) (n int, err error) {
 
 func (c *WebRTConn) _write(ctx context.Context, b []byte) (n int, err error) {
 	n = len(b)
-	err = c.dataChannel.Send(b)
-	if err != nil {
-		return 0, nil
+	writeDone := make(chan error)
+
+	go func() {
+		err = c.dataChannel.Send(b)
+		if err != nil {
+			writeDone <- err
+		}
+		writeDone <- nil
+	}()
+
+	select {
+	case err := <-writeDone:
+		return n, err
+	case <-ctx.Done():
+		return 0, ctx.Err()
 	}
-	return n, err
 }
 
 // Write() send bytes over DataChannel.
