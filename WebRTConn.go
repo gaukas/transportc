@@ -2,7 +2,9 @@ package transportc
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -17,9 +19,9 @@ type WebRTConn struct {
 	status  WebRTConnStatus
 
 	// datachannel to net.Conn interface
-	dataChannel *DataChannel
-	recvBuf     *([]byte)
-	// sendBuf     chan byte // Shouldn't be needed
+	dataChannel    *DataChannel
+	recvBuf        chan []byte
+	unfinishedRecv []byte
 
 	// net.Conn support, not meaningful at current phase
 	localAddr  PeerAddr
@@ -48,38 +50,33 @@ func Dial(_, _ string) (*WebRTConn, error) {
 }
 
 func (c *WebRTConn) _read(ctx context.Context, b []byte) (n int, err error) {
-	defer c.lock.Unlock()
-	c.lock.Lock()
-	n = len(*c.recvBuf)
-	err = nil
-	var i int
-	readDone := make(chan int)
+	// defer c.lock.Unlock()
+	// c.lock.Lock()
+	var sizeReadMax int = len(b)
 
-	go func() {
-		for i = 0; i < n && i < len(b); i++ {
-			nextbyte := (*c.recvBuf)[0]
-			*c.recvBuf = (*c.recvBuf)[1:]
-			// fmt.Printf("Byte read: %d\n", nextbyte)
-			b[i] = nextbyte
+	if len(c.unfinishedRecv) == 0 {
+		select {
+		case <-ctx.Done():
+			// if c.status&WebRTConnClosed > 0 {
+			// 	return 0, ErrDataChannelClosed
+			// } else if c.status&WebRTConnErrored > 0 {
+			// 	err = c.lasterr
+			// 	c.lasterr = nil
+			// 	c.status &^= WebRTConnErrored
+			// 	return 0, err
+			// } else {
+			return 0, ctx.Err()
+			// }
+		case c.unfinishedRecv = <-c.recvBuf:
+			break
 		}
-
-		if c.status&WebRTConnClosed > 0 {
-			err = ErrDataChannelClosed
-		} else if c.status&WebRTConnErrored > 0 {
-			err = c.lasterr
-			c.lasterr = nil
-			c.status ^= WebRTConnErrored
-		}
-
-		readDone <- i
-	}()
-
-	select {
-	case i = <-readDone:
-		return i, err
-	case <-ctx.Done():
-		return i, ctx.Err()
 	}
+
+	for n = 0; n < sizeReadMax && len(c.unfinishedRecv) > 0; n++ {
+		b[n] = c.unfinishedRecv[0]
+		c.unfinishedRecv = c.unfinishedRecv[1:]
+	}
+	return n, nil
 }
 
 // Read() reads from recvBuf as the byte channel.
@@ -89,7 +86,11 @@ func (c *WebRTConn) Read(b []byte) (n int, err error) {
 	} else {
 		ctx, cancel := context.WithDeadline(context.Background(), c.readDeadline)
 		defer cancel()
-		return c._read(ctx, b)
+		n, err := c._read(ctx, b)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return n, os.ErrDeadlineExceeded
+		}
+		return n, err
 	}
 }
 
@@ -107,6 +108,7 @@ func (c *WebRTConn) _write(ctx context.Context, b []byte) (n int, err error) {
 
 	select {
 	case err := <-writeDone:
+		// fmt.Printf("Written: %d bytes\n", n)
 		return n, err
 	case <-ctx.Done():
 		return 0, ctx.Err()

@@ -40,7 +40,9 @@ func DeclareDatachannel(dcconfig *DataChannelConfig, pionSettingEngine webrtc.Se
 		}
 	}
 
-	if dcconfig.RawSocket != nil {
+	if dcconfig.UDPMux != nil {
+		dataChannel.UseUDPMux(dcconfig.UDPMux)
+	} else if dcconfig.RawSocket != nil {
 		dataChannel.UseRawSocket(dcconfig.RawSocket)
 	}
 	return &dataChannel

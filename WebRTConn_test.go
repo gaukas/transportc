@@ -1,6 +1,7 @@
 package transportc
 
 import (
+	"net"
 	"testing"
 
 	"github.com/pion/webrtc/v3"
@@ -11,6 +12,58 @@ func testInit(conn *WebRTConn, sdpType string) error {
 		Label:          "Test-DataChannel",
 		SelfSDPType:    sdpType,
 		SendBufferSize: DataChannelBufferSizeDefault,
+	}
+	newSettingEngine := webrtc.SettingEngine{}
+	newConfiguration := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	return conn.Init(&newDCConfig, newSettingEngine, newConfiguration)
+}
+
+func testInitUDPListener(conn *WebRTConn, sdpType string) error {
+	udpListener, err := net.ListenUDP("udp", &net.UDPAddr{
+		IP:   net.IP{0, 0, 0, 0},
+		Port: 18089,
+	})
+	if err != nil {
+		return err
+	}
+	newDCConfig := DataChannelConfig{
+		Label:          "Test-DataChannel",
+		SelfSDPType:    sdpType,
+		SendBufferSize: DataChannelBufferSizeDefault,
+		RawSocket:      udpListener,
+	}
+	newSettingEngine := webrtc.SettingEngine{}
+	newConfiguration := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	return conn.Init(&newDCConfig, newSettingEngine, newConfiguration)
+}
+
+func testInitUDPDialer(conn *WebRTConn, sdpType string) error {
+	udpDialer, err := net.DialUDP("udp", nil, &net.UDPAddr{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: 18089,
+	})
+	if err != nil {
+		return err
+	}
+	newDCConfig := DataChannelConfig{
+		Label:          "Test-DataChannel",
+		SelfSDPType:    sdpType,
+		SendBufferSize: DataChannelBufferSizeDefault,
+		RawSocket:      udpDialer,
 	}
 	newSettingEngine := webrtc.SettingEngine{}
 	newConfiguration := webrtc.Configuration{
@@ -48,6 +101,110 @@ func TestCommunication(t *testing.T) {
 
 	testInit(pingConn, "offer")
 	testInit(pongConn, "answer")
+
+	// Set Offer on Answerer.
+	sdpOffer, pingErr := pingConn.LocalSDP()
+	if pingErr != nil {
+		t.Fatalf("LocalSDP(): %s\n", pingErr)
+	}
+	pongErr := pongConn.SetRemoteSDP(sdpOffer)
+	if pongErr != nil {
+		t.Fatalf("SetRemoteSDP(): %s\n", pongErr)
+	}
+
+	// Set Answer on Offerer
+	sdpAnswer, pongErr := pongConn.LocalSDP()
+	if pongErr != nil {
+		t.Fatalf("LocalSDP(): %s\n", pongErr)
+	}
+	pingErr = pingConn.SetRemoteSDP(sdpAnswer)
+	if pingErr != nil {
+		t.Fatalf("SetRemoteSDP(): %s\n", pingErr)
+	}
+
+	// Wait for datachannel establishment
+	for (pingConn.Status() & WebRTConnReady) == 0 {
+	}
+	for (pongConn.Status() & WebRTConnReady) == 0 {
+	}
+
+	// Prepare for real communications
+	pingMsg := []byte("Ping")
+	pongMsg := []byte("Pong")
+
+	// Send from ping to pong
+	_, pingErr = pingConn.Write(pingMsg)
+	if pingErr != nil {
+		t.Fatalf("Write(): %s\n", pingErr)
+	}
+
+	pongRecv := make([]byte, 10)
+	for {
+		n, err := pongConn.Read(pongRecv)
+		t.Logf("Received %d bytes", n)
+		if err != nil {
+			t.Logf(", err: %s", err)
+		}
+		t.Logf("\n")
+
+		if n > 0 {
+			// Copy recv into a "clean" array includes no \x00
+			clean := []byte{}
+			for _, b := range pongRecv {
+				if b != 0 {
+					clean = append(clean, b)
+				}
+			}
+			pongRecv = clean
+			// logger.Printf("Ping: %s of size %d", string(recv), len(recv))
+			break
+		}
+	}
+
+	if string(pongRecv) != "Ping" {
+		t.Fatal("Read() failed the message integrity checking.\n")
+	}
+
+	// Send from pong to ping
+	_, pongErr = pongConn.Write(pongMsg)
+	if pongErr != nil {
+		t.Fatalf("Write(): %s\n", pongErr)
+	}
+
+	pingRecv := make([]byte, 10)
+	for {
+		n, _ := pingConn.Read(pingRecv)
+		if n > 0 {
+			// Copy recv into a "clean" array includes no \x00
+			clean := []byte{}
+			for _, b := range pingRecv {
+				if b != 0 {
+					clean = append(clean, b)
+				}
+			}
+			pingRecv = clean
+			// logger.Printf("Ping: %s of size %d", string(recv), len(recv))
+			break
+		}
+	}
+
+	if string(pingRecv) != "Pong" {
+		t.Fatal("Read() failed the message integrity checking.\n")
+	}
+
+	pingErr = pingConn.Close()
+	pongErr = pongConn.Close()
+	if pingErr != nil && pongErr != nil {
+		t.Fatalf("Close(): %s, %s\n", pingErr, pongErr)
+	}
+}
+
+func TestRawSocketComm(t *testing.T) {
+	pingConn, _ := Dial("udp", "0.0.0.0")
+	pongConn, _ := Dial("udp", "0.0.0.0")
+
+	testInitUDPDialer(pingConn, "offer")
+	testInitUDPListener(pongConn, "answer")
 
 	// Set Offer on Answerer.
 	sdpOffer, pingErr := pingConn.LocalSDP()
@@ -139,5 +296,3 @@ func TestCommunication(t *testing.T) {
 		t.Fatalf("Close(): %s, %s\n", pingErr, pongErr)
 	}
 }
-
-// T.B.C.

@@ -3,6 +3,7 @@ package transportc
 import (
 	"net"
 
+	"github.com/pion/ice/v2"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -25,6 +26,7 @@ type DataChannelConfig struct {
 
 	// Enhanced Features Under Test, just wrapper
 	RawSocket *net.UDPConn
+	UDPMux    ice.UDPMux
 }
 
 func (dcc DataChannelConfig) PeerSDPType() string {
