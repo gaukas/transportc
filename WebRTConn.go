@@ -50,8 +50,8 @@ func Dial(_, _ string) (*WebRTConn, error) {
 }
 
 func (c *WebRTConn) _read(ctx context.Context, b []byte) (n int, err error) {
-	// defer c.lock.Unlock()
-	// c.lock.Lock()
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	var sizeReadMax int = len(b)
 
 	if len(c.unfinishedRecv) == 0 {
