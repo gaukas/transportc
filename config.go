@@ -39,7 +39,7 @@ type Config struct {
 	InterfaceFilter func(interfaceName string) (allowed bool)
 }
 
-func (c *Config) NewDialer(pConf webrtc.Configuration) (*Dialer, error) {
+func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (c *Config) NewDialer(pConf webrtc.Configuration) (*Dialer, error) {
 	}, nil
 }
 
-func (c *Config) NewListener(pConf webrtc.Configuration) (*Listener, error) {
+func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func (c *Config) NewListener(pConf webrtc.Configuration) (*Listener, error) {
 
 	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole)
 
-	return &Listener{
+	l := &Listener{
 		runningStatus:   LISTENER_NEW,
 		rand:            rand.New(rand.NewSource(time.Now().UnixNano())),
 		settingEngine:   settingEngine,
@@ -67,7 +67,9 @@ func (c *Config) NewListener(pConf webrtc.Configuration) (*Listener, error) {
 		peerConnections: make(map[uint64]*webrtc.PeerConnection),
 		conns:           make(chan net.Conn),
 		abortAccept:     make(chan bool),
-	}, nil
+	}
+
+	return l, nil
 }
 
 func (c *Config) BuildSettingEngine() (webrtc.SettingEngine, error) {

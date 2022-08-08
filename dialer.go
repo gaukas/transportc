@@ -18,7 +18,7 @@ type Dialer struct {
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
-	configuration webrtc.Configuration
+	configuration *webrtc.Configuration
 
 	// WebRTC PeerConnection
 	mutex          sync.Mutex // mutex makes peerConnection thread-safe
@@ -142,7 +142,7 @@ func (d *Dialer) Close() error {
 // Not thread-safe. Caller MUST hold the mutex before calling this function.
 func (d *Dialer) NewPeerConnection(ctx context.Context) error {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(d.settingEngine))
-	peerConnection, err := api.NewPeerConnection(d.configuration)
+	peerConnection, err := api.NewPeerConnection(*d.configuration)
 	if err != nil {
 		return err
 	}

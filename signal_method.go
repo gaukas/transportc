@@ -2,7 +2,6 @@ package transportc
 
 import (
 	"errors"
-	"io"
 )
 
 type SignalMethod interface {
@@ -41,7 +40,7 @@ type DebugSignal struct {
 	answers chan []byte
 }
 
-func NewIOSignal(w io.Writer, r io.Reader) *DebugSignal {
+func NewDebugSignal() *DebugSignal {
 	return &DebugSignal{
 		offers:  make(chan []byte),
 		answers: make(chan []byte),

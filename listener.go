@@ -34,7 +34,7 @@ type Listener struct {
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
-	configuration webrtc.Configuration
+	configuration *webrtc.Configuration
 
 	// WebRTC PeerConnection
 	mutex           sync.Mutex                        // mutex makes peerConnection thread-safe
@@ -53,6 +53,12 @@ func (l *Listener) Accept() (net.Conn, error) {
 	case <-l.abortAccept:
 		return nil, errors.New("listener stopped")
 	}
+}
+
+func (l *Listener) Start() error {
+	atomic.StoreUint32(&l.runningStatus, LISTENER_RUNNING)
+	l.startAcceptLoop()
+	return nil
 }
 
 // Stop the listener. Close existing PeerConnections.
@@ -104,7 +110,7 @@ func (l *Listener) startAcceptLoop() {
 
 func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(l.settingEngine))
-	peerConnection, err := api.NewPeerConnection(l.configuration)
+	peerConnection, err := api.NewPeerConnection(*l.configuration)
 	if err != nil {
 		return err
 	}
@@ -151,8 +157,15 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
 	var bChan chan bool = make(chan bool)
 
 	offerUnmarshal := webrtc.SessionDescription{}
-	err = json.Unmarshal(offer, offerUnmarshal)
+	err = json.Unmarshal(offer, &offerUnmarshal)
+	if err != nil {
+		return err
+	}
+
 	err = peerConnection.SetRemoteDescription(offerUnmarshal)
+	if err != nil {
+		return err
+	}
 
 	// wait for local answer
 	go func(blockingChan chan bool) {
@@ -201,7 +214,7 @@ func (l *Listener) nextPCID() uint64 {
 
 	var id uint64
 	for {
-		id = uint64(rand.Uint64())
+		id = uint64(l.rand.Uint64())
 		if _, ok := l.peerConnections[id]; !ok { // not found
 			break // okay to use this ID
 		}
