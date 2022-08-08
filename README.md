@@ -2,38 +2,31 @@
 
 A ready-to-go pluggable transport utilizing WebRTC datachannel written in Go. 
 
-## Dev Roadmap
+## Design
 
-- `Dial(network, address string) (WebRTConn, error)`
-    - [x] return valid `WebRTConn{}`
-    - [ ] use `network`
-    - [ ] use `address`
+### Config 
 
-- `WebRTConn{}` as `net.Conn{}`
-    - [x] `Read(b []byte) (n int, err error)`
-    - [x] `Write(b []byte) (n int, err error)`
-    - [x] `Close() error`
-    - [x] `LocalAddr() net.Addr`
-    - [x] `RemoteAddr() net.Addr`
-    - [ ] `SetDeadline(t time.Time) error`
-    - [ ] `SetReadDeadline(t time.Time) error`
-    - [ ] `SetWriteDeadline(t time.Time) error`
+A `Config` defines the behavior of the transport. A `Config` could be used to configure: 
 
+- Automatic signalling when establishing the PeerConnection
+- IP addresses to be used for ICE candidates
+- Port range for ICE candidates
+- UDP Mux for serving multiple connections over one UDP socket
 
-## Guide
+### Dialer 
 
-`transportc.WebRTConn{}` is a `net.Conn{}` compatible object with additional setting-up functions necessary for WebRTC peer connections and data channels.
+A `Dialer` is created from a `Config` and is used to dial one or more `Conn` backed by WebRTC DataChannel.
 
-### Minimal Viable Setup Steps
+On its first call to `Dial`, the `Dialer` will create a new PeerConnection and DataChannel. On subsequent calls, the `Dialer` will reuse the existing PeerConnection and DataChannel.
 
-1. Creates `WebRTConn{}` with `transportc.Dial(network, remoteIP)`
-2. Initialize `WebRTConn{}` with `.Init(&conf, pionSettingEngine, pionConfig)`
-3. Role-dependent step:
-    - For an offerer: Obtain the SDP offer with `.LocalSDP()` or `.LocalSDPJsonString()`
-    - For an answerer: Feed in the SDP offer with `.SetRemoteSDP(remoteSDP string)` or `.SetRemoteSDPJsonString(remoteSdp *webrtc.SessionDescription)`
-4. Role-dependent step:
-    - For an offerer: Feed in the SDP answer with `.SetRemoteSDP(remoteSDP string)` or `.SetRemoteSDPJsonString(remoteSdp *webrtc.SessionDescription)`
-    - For an answerer: Obtain the SDP answer with `.LocalSDP()` or `.LocalSDPJsonString()`
-5. Wait until bit `WebRTConnReady` is set in `.Status()` evaluates to a non-zero value.
-    - At this point, the datachannel is established. Enjoy!
-6. Send or receive with `.Write(b)` or `.Read(b)` correspondingly. 
+### Listener 
+
+A `Listener` is created from a `Config` and is used to listen for incoming `Conn` backed by WebRTC DataChannel. It looks for incoming SDP offers to establish new PeerConnections and also looks for incoming DataChannels on existing PeerConnections.
+
+One `Listener` can maintain multiple `PeerConnection`s and on each `PeerConnection` multiple `DataChannel`s may co-exist.
+
+A `Listener` requires a valid `SignalMethod` to function. 
+
+### Conn
+
+A `Conn` is created from a `Dialer` and is used to send and receive messages. Each `Conn` is backed by a single WebRTC DataChannel.

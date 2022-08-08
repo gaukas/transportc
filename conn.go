@@ -2,182 +2,132 @@ package transportc
 
 import (
 	"errors"
+	"io"
 	"net"
-	"sync"
+	"os"
 	"time"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/datachannel"
+	"golang.org/x/net/context"
 )
 
-// Conn implements the net.Conn interface.
+// Conn is a net.Conn implementation for WebRTC DataChannels.
 type Conn struct {
-	// config
-	config *Config
+	dataChannel datachannel.ReadWriteCloser
 
-	// lock protects recvBuf
-	bufLock *sync.Mutex
-	recvBuf []byte
+	readDeadline      time.Time
+	readMaxPacketSize int
+	readBuf           chan []byte
 
-	rDeadline time.Time
-	wDeadline time.Time
-
-	// pion/webrtc wrapper
-	pion pionWrapper
-}
-
-// connWithConfig DOES NOT start the handshake!
-func connWithConfig(config *Config) *Conn {
-	return &Conn{
-		config:  config,
-		bufLock: &sync.Mutex{},
-		recvBuf: make([]byte, 0),
-		pion:    pionWrapper{},
-	}
+	writeDeadline time.Time
 }
 
 // Read implements the net.Conn Read method.
-func (c *Conn) Read(b []byte) (n int, err error) {
-	for c.rDeadline.After(time.Now()) || c.rDeadline.IsZero() {
-		c.bufLock.Lock()
-		if len(c.recvBuf) > 0 {
-			n = copy(b, c.recvBuf)
-			c.recvBuf = c.recvBuf[n:]
-			c.bufLock.Unlock()
-			return n, nil
-		}
-		c.bufLock.Unlock()
+func (c *Conn) Read(p []byte) (int, error) {
+	if c.readDeadline.Before(time.Now()) && !c.readDeadline.IsZero() {
+		return 0, os.ErrDeadlineExceeded
 	}
-	return 0, errors.New("read deadline exceeded")
+
+	var ctx context.Context = context.Background()
+	var cancel context.CancelFunc = func() {}
+	if !c.readDeadline.IsZero() {
+		ctx, cancel = context.WithDeadline(ctx, c.readDeadline)
+	}
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 0, os.ErrDeadlineExceeded
+		}
+		return 0, ctx.Err()
+	case b := <-c.readBuf:
+		var err error = nil
+		if len(b) > len(p) {
+			err = io.ErrShortBuffer
+		}
+		return copy(p, b), err
+	}
 }
 
 // Write implements the net.Conn Write method.
-func (c *Conn) Write(b []byte) (n int, err error) {
-	for c.wDeadline.After(time.Now()) || c.wDeadline.IsZero() {
-		if c.pion.dataChannel == nil {
-			return 0, errors.New("data channel not found")
-		}
-		err := c.pion.dataChannel.Send(b)
-		if err == nil {
-			return len(b), nil
-		} else {
-			return 0, err
-		}
+func (c *Conn) Write(p []byte) (int, error) {
+	if c.writeDeadline.Before(time.Now()) && !c.writeDeadline.IsZero() {
+		return 0, os.ErrDeadlineExceeded
 	}
-	return 0, errors.New("write deadline exceeded")
+	return c.dataChannel.Write(p)
 }
 
+// Close implements the net.Conn Close method.
 func (c *Conn) Close() error {
-	c.bufLock.Lock()
-	defer c.bufLock.Unlock()
-
-	err := c.pion.dataChannel.Close()
-	if err != nil {
-		return err
-	}
-	return c.pion.peerConnection.Close()
+	return c.dataChannel.Close()
 }
 
-func (c *Conn) LocalAddr() net.Addr {
-	return LocalDummyAddr()
+// LocalAddr implements the net.Conn LocalAddr method.
+//
+// It is hardcoded to return nil since WebRTC DataChannels are P2P
+// and Local addresses are therefore trivial.
+func (*Conn) LocalAddr() net.Addr {
+	return nil
 }
 
-func (c *Conn) RemoteAddr() net.Addr {
-	return RemoteDummyAddr()
+// RemoteAddr implements the net.Conn RemoteAddr method.
+//
+// It is hardcoded to return nil since WebRTC DataChannels are P2P
+// and Remote addresses are therefore trivial.
+func (*Conn) RemoteAddr() net.Addr {
+	return nil
 }
 
+// SetDeadline implements the net.Conn SetDeadline method.
+// It sets both read and write deadlines in a single call.
+//
+// See SetReadDeadline and SetWriteDeadline for the behavior of the deadlines.
 func (c *Conn) SetDeadline(deadline time.Time) error {
 	if deadline.Before(time.Now()) && !deadline.IsZero() {
 		return errors.New("deadline is in the past")
 	}
-	c.rDeadline = deadline
-	c.wDeadline = deadline
+	c.readDeadline = deadline
+	c.writeDeadline = deadline
 	return nil
 }
 
+// SetReadDeadline sets the deadline for future Read calls.
+//
+// A ReadFrom call will fail and return os.ErrDeadlineExceeded
+// before attempting to read from the buffer if the deadline has passed.
+// And a ReadFrom call will block till no later than the set read deadline.
 func (c *Conn) SetReadDeadline(deadline time.Time) error {
 	if deadline.Before(time.Now()) && !deadline.IsZero() {
 		return errors.New("deadline is in the past")
 	}
-	c.rDeadline = deadline
+	c.readDeadline = deadline
 	return nil
 }
 
+// SetWriteDeadline sets the deadline for future Write calls.
+//
+// A WriteTo call will fail and return os.ErrDeadlineExceeded
+// before attempting to write to the buffer if the deadline has passed.
+// Otherwise the set write deadline will not affect the WriteTo call.
 func (c *Conn) SetWriteDeadline(deadline time.Time) error {
 	if deadline.Before(time.Now()) && !deadline.IsZero() {
 		return errors.New("deadline is in the past")
 	}
-	c.wDeadline = deadline
+	c.writeDeadline = deadline
 	return nil
 }
 
-// CreateLocalDescription creates a local session description.
-// It will block until ICE gathering is complete.
+// readLoop reads from the underlying DataChannel and writes to the readBuf channel.
 //
-// Need to be called manually when using no SignalMethod.
-func (c *Conn) CreateLocalDescription() error {
-	var localDescription webrtc.SessionDescription
-	var err error
-	if c.config.SDPRole == OFFERER {
-		localDescription, err = c.pion.peerConnection.CreateOffer(nil)
-	} else if c.config.SDPRole == ANSWERER {
-		localDescription, err = c.pion.peerConnection.CreateAnswer(nil)
-	} else {
-		err = errors.New("unknown SDP role")
-	}
-
-	if err != nil {
-		return err
-	}
-
-	// Create channel that is blocked until ICE Gathering is complete
-	gatherComplete := webrtc.GatheringCompletePromise(c.pion.peerConnection)
-
-	// Sets the LocalDescription, and starts our UDP listeners
-	err = c.pion.peerConnection.SetLocalDescription(localDescription)
-	if err != nil {
-		return err
-	}
-
-	// Block until ICE Gathering is complete, disabling trickle ICE
-	// we do this because we only can exchange one signaling message
-	// in a production application you should exchange ICE Candidates via OnICECandidate
-	// TODO: use OnICECandidate callback instead
-	<-gatherComplete
-
-	return nil
-}
-
-func (c *Conn) GetLocalDescription() *webrtc.SessionDescription {
-	return c.pion.peerConnection.LocalDescription()
-}
-
-func (c *Conn) SetRemoteDescription(remoteSDP *webrtc.SessionDescription) error {
-	return c.pion.peerConnection.SetRemoteDescription(*remoteSDP)
-}
-
-func (c *Conn) setEventHandler(dataChannelStatus chan bool) {
-	c.pion.peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		if connectionState > webrtc.ICEConnectionStateConnected {
-			c.pion.peerConnection.Close() // TODO: should this be done?
+// Start running in a goroutine once the datachannel is opened.
+func (c *Conn) readLoop() {
+	for {
+		b := make([]byte, c.readMaxPacketSize)
+		n, err := c.dataChannel.Read(b)
+		if err != nil {
+			break // Conn failed or closed
 		}
-	})
-
-	c.pion.dataChannel.OnOpen(func() {
-		dataChannelStatus <- true
-	})
-
-	c.pion.dataChannel.OnClose(func() {
-		dataChannelStatus <- false
-	})
-
-	c.pion.dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		// append to conn.recvBuf
-		c.bufLock.Lock()
-		c.recvBuf = append(c.recvBuf, msg.Data...)
-		c.bufLock.Unlock()
-	})
-
-	c.pion.dataChannel.OnError(func(err error) {
-		// TODO: Do something? Deal with it? Tear it down?
-	})
+		c.readBuf <- b[:n]
+	}
 }
