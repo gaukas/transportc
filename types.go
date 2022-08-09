@@ -19,11 +19,14 @@ const (
 	DTLSRoleServer
 )
 
+// NAT1To1IPs consists of a slice of IP addresses and one single ICE Candidate Type.
+// Use this struct to set the IPs to be used as ICE Candidates.
 type NAT1To1IPs struct {
 	IPs  []string
 	Type webrtc.ICECandidateType
 }
 
+// PortRange specifies the range of ports to use for ICE Transports.
 type PortRange struct {
 	Min uint16
 	Max uint16

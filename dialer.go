@@ -11,7 +11,9 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-// Dialer
+// Dialer can dial a remote peer.
+//
+// If the SignalMethod is set, the Offer/Answer exchange per new PeerConnection will be done automatically.
 type Dialer struct {
 	SignalMethod SignalMethod
 	MaxReadSize  int

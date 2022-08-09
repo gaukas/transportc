@@ -24,6 +24,7 @@ const (
 
 const ()
 
+// Listener listens for new PeerConnections and saves all incoming datachannel from peers for later use.
 type Listener struct {
 	SignalMethod     SignalMethod
 	MaxReadSize      int
@@ -45,6 +46,10 @@ type Listener struct {
 	abortAccept chan bool     // Initialized at creation
 }
 
+// Accept accepts a new connection from the listener.
+//
+// It does not establish new connections.
+// These connections are from the pool filled automatically by acceptLoop.
 func (l *Listener) Accept() (net.Conn, error) {
 	// read next from conns
 	select {

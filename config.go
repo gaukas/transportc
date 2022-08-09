@@ -14,6 +14,7 @@ const (
 	MAX_RECV_TIMEOUT_DEFAULT = time.Second * 10
 )
 
+// Config is the configuration for the Dialer and Listener.
 type Config struct {
 	// ListenerDTLSRole defines the DTLS role when Listening.
 	// MUST be either DTLSRoleClient or DTLSRoleServer, as defined in RFC4347
@@ -44,6 +45,7 @@ type Config struct {
 	InterfaceFilter func(interfaceName string) (allowed bool)
 }
 
+// NewDialer creates a new Dialer from the given configuration.
 func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
@@ -58,6 +60,7 @@ func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
 	}, nil
 }
 
+// NewListener creates a new Listener from the given configuration.
 func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
@@ -82,6 +85,7 @@ func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 	return l, nil
 }
 
+// BuildSettingEngine builds a SettingEngine from the configuration.
 func (c *Config) BuildSettingEngine() (webrtc.SettingEngine, error) {
 	var settingEngine webrtc.SettingEngine = webrtc.SettingEngine{}
 
