@@ -60,32 +60,9 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
-	if d.peerConnection == nil {
-		err := d.NewPeerConnection(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// create new DataChannel
-	dataChannel, err := d.peerConnection.CreateDataChannel(label, nil)
+	dataChannel, err := d.nextDataChannel(ctx, label)
 	if err != nil {
-		if errors.Is(err, webrtc.ErrConnectionClosed) {
-			// could be closed, will try with a new PeerConnection
-			err := d.NewPeerConnection(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			// second attempt to create DataChannel
-			// if this fails, no more retries
-			dataChannel, err = d.peerConnection.CreateDataChannel(label, nil)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	// set event handlers
@@ -132,32 +109,78 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 //
 // SHOULD be called when done using the transport.
 func (d *Dialer) Close() error {
-	return d.peerConnection.Close()
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	if d.peerConnection != nil {
+		return d.peerConnection.Close()
+	}
+	return nil
 }
 
-// NewPeerConnection creates a new PeerConnection to be used for the next Dial.
+func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.DataChannel, error) {
+	if d.peerConnection == nil {
+		dc, err := d.startPeerConnection(ctx, label)
+		if err != nil {
+			return nil, err
+		}
+		return dc, nil
+	}
+
+	// try getting a new data channel
+	dataChannel, err := d.peerConnection.CreateDataChannel(label, nil)
+	if err != nil {
+		// error: retry after getting a new peer connection.
+		if errors.Is(err, webrtc.ErrConnectionClosed) {
+			d.peerConnection.Close()
+			d.peerConnection = nil
+			dataChannel, err = d.startPeerConnection(ctx, label)
+			if err != nil {
+				return nil, err
+			}
+		} else { // error but not due to PC closed
+			return nil, err
+		}
+	}
+	return dataChannel, nil
+}
+
+// startPeerConnection creates a new PeerConnection that can be reused in following Dial calls.
 //
 // If SignalMethod is set, the Offer/Answer exchange will be done automatically.
 //
+// It returns the first DataChannel created with the PeerConnection.
+//
 // Not thread-safe. Caller MUST hold the mutex before calling this function.
-func (d *Dialer) NewPeerConnection(ctx context.Context) error {
+func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel string) (*webrtc.DataChannel, error) {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(d.settingEngine))
+
+	if d.configuration == nil {
+		d.configuration = &webrtc.Configuration{}
+	}
+
 	peerConnection, err := api.NewPeerConnection(*d.configuration)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		d.mutex.Lock()
 		defer d.mutex.Unlock()
 
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateDisconnected {
+		if s == webrtc.PeerConnectionStateFailed {
 			peerConnection.Close()
-			d.peerConnection = nil
+			if d.peerConnection == peerConnection {
+				d.peerConnection = nil
+			}
 		}
 	})
 
 	d.peerConnection = peerConnection
+
+	dataChannel, err := d.peerConnection.CreateDataChannel(dataChannelLabel, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Automatic Signalling when possible
 	if d.SignalMethod != nil {
@@ -171,18 +194,18 @@ func (d *Dialer) NewPeerConnection(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case status := <-bChan:
 			if !status {
-				return errors.New("failed to create local offer")
+				return nil, errors.New("failed to create local offer")
 			}
 			offer, err := d.GetOffer()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			err = d.SignalMethod.MakeOffer(offer)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -199,15 +222,15 @@ func (d *Dialer) NewPeerConnection(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case status := <-bChan:
 			if !status {
-				return errors.New("failed to receive answer")
+				return nil, errors.New("failed to receive answer")
 			}
 		}
 	}
 
-	return nil
+	return dataChannel, nil
 }
 
 // CreateOffer creates a local offer and sets it as the local description.

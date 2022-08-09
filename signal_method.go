@@ -40,10 +40,10 @@ type DebugSignal struct {
 	answers chan []byte
 }
 
-func NewDebugSignal() *DebugSignal {
+func NewDebugSignal(bufferSize int) *DebugSignal {
 	return &DebugSignal{
-		offers:  make(chan []byte),
-		answers: make(chan []byte),
+		offers:  make(chan []byte, bufferSize),
+		answers: make(chan []byte, bufferSize),
 	}
 }
 

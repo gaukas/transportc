@@ -25,12 +25,12 @@ const (
 const ()
 
 type Listener struct {
-	runningStatus ListenerRunningStatus // Initialized at creation. Atomic. Access via sync/atomic methods only
-	rand          *rand.Rand            // Initialized at creation.
-
 	SignalMethod     SignalMethod
 	MaxReadSize      int
 	MaxAcceptTimeout time.Duration
+
+	runningStatus ListenerRunningStatus // Initialized at creation. Atomic. Access via sync/atomic methods only
+	rand          *rand.Rand            // Initialized at creation.
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
@@ -56,28 +56,36 @@ func (l *Listener) Accept() (net.Conn, error) {
 }
 
 func (l *Listener) Start() error {
-	atomic.StoreUint32(&l.runningStatus, LISTENER_RUNNING)
-	l.startAcceptLoop()
-	return nil
+	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_NEW, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_STOPPED, LISTENER_RUNNING) {
+		l.startAcceptLoop()
+		return nil
+	}
+	return errors.New("listener already started")
 }
 
 // Stop the listener. Close existing PeerConnections.
+//
+// The listener can be stopped when it is running or suspended.
 func (l *Listener) Stop() error {
-	atomic.StoreUint32(&l.runningStatus, LISTENER_STOPPED)
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-	for _, pc := range l.peerConnections {
-		pc.Close()
-	}
-	l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
+	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_STOPPED) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_STOPPED) {
+		l.mutex.Lock()
+		defer l.mutex.Unlock()
+		for _, pc := range l.peerConnections {
+			pc.Close()
+		}
+		l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
 
-	return nil
+		return nil
+	}
+	return errors.New("listener already stopped")
 }
 
 // Suspend the listener. Don't close existing PeerConnections.
 func (l *Listener) Suspend() error {
-	atomic.StoreUint32(&l.runningStatus, LISTENER_SUSPENDED)
-	return nil
+	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_SUSPENDED) {
+		return nil
+	}
+	return errors.New("listener not in running state")
 }
 
 // startAcceptLoop() should be called before the first Accept() call.
@@ -88,8 +96,8 @@ func (l *Listener) startAcceptLoop() {
 
 	// Loop: accept new Offers from SignalMethod and establish new PeerConnections
 	go func() {
-		for atomic.LoadUint32(&l.runningStatus) != LISTENER_STOPPED { // new/running/suspended
-			for atomic.LoadUint32(&l.runningStatus) == LISTENER_RUNNING {
+		for atomic.LoadUint32(&l.runningStatus) != LISTENER_STOPPED { // Don't return unless STOPPED
+			for atomic.LoadUint32(&l.runningStatus) == LISTENER_RUNNING { // Only accept new Offers if RUNNING
 				// Accept new Offer from SignalMethod
 				offer, err := l.SignalMethod.GetOffer()
 				if err != nil {
@@ -99,7 +107,10 @@ func (l *Listener) startAcceptLoop() {
 				go func() {
 					ctxTimeout, cancel := context.WithTimeout(context.Background(), l.MaxAcceptTimeout)
 					defer cancel()
-					l.nextPeerConnection(ctxTimeout, offer)
+					err := l.nextPeerConnection(ctxTimeout, offer)
+					if err != nil {
+						return // ignore errors
+					}
 				}()
 			}
 			// sleep for a little while if new/suspended
@@ -110,6 +121,11 @@ func (l *Listener) startAcceptLoop() {
 
 func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(l.settingEngine))
+
+	if l.configuration == nil {
+		l.configuration = &webrtc.Configuration{}
+	}
+
 	peerConnection, err := api.NewPeerConnection(*l.configuration)
 	if err != nil {
 		return err

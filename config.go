@@ -9,6 +9,11 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
+const (
+	MAX_READ_SIZE_DEFAULT    = 1024
+	MAX_RECV_TIMEOUT_DEFAULT = time.Second * 10
+)
+
 type Config struct {
 	// ListenerDTLSRole defines the DTLS role when Listening.
 	// MUST be either DTLSRoleClient or DTLSRoleServer, as defined in RFC4347
@@ -31,7 +36,7 @@ type Config struct {
 	UDPMux ice.UDPMux
 
 	// CandidateNetworkTypes restricts ICE agent to gather
-	// only selected types of ICE candidates.
+	// on only selected types of networks.
 	CandidateNetworkTypes []webrtc.NetworkType
 
 	// InterfaceFilter restricts ICE agent to gather ICE candidates
@@ -46,6 +51,8 @@ func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
 	}
 
 	return &Dialer{
+		SignalMethod:  SignalMethodManual,
+		MaxReadSize:   MAX_READ_SIZE_DEFAULT,
 		settingEngine: settingEngine,
 		configuration: pConf,
 	}, nil
@@ -57,16 +64,19 @@ func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 		return nil, err
 	}
 
-	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole)
+	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole) // ignore if any error
 
 	l := &Listener{
-		runningStatus:   LISTENER_NEW,
-		rand:            rand.New(rand.NewSource(time.Now().UnixNano())),
-		settingEngine:   settingEngine,
-		configuration:   pConf,
-		peerConnections: make(map[uint64]*webrtc.PeerConnection),
-		conns:           make(chan net.Conn),
-		abortAccept:     make(chan bool),
+		SignalMethod:     SignalMethodManual,
+		MaxReadSize:      MAX_READ_SIZE_DEFAULT,
+		MaxAcceptTimeout: MAX_RECV_TIMEOUT_DEFAULT,
+		runningStatus:    LISTENER_NEW,
+		rand:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		settingEngine:    settingEngine,
+		configuration:    pConf,
+		peerConnections:  make(map[uint64]*webrtc.PeerConnection),
+		conns:            make(chan net.Conn),
+		abortAccept:      make(chan bool),
 	}
 
 	return l, nil
@@ -99,7 +109,7 @@ func (c *Config) BuildSettingEngine() (webrtc.SettingEngine, error) {
 	}
 
 	// GW: Making sure we will get a detached DataChannel as
-	// a datachannel.ReadWriteCloser upon onOpen event.
+	// a datachannel.ReadWriteCloser upon datachannel.onOpen event.
 	settingEngine.DetachDataChannels()
 
 	return settingEngine, nil
