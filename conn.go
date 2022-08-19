@@ -15,9 +15,9 @@ import (
 type Conn struct {
 	dataChannel datachannel.ReadWriteCloser
 
-	readDeadline      time.Time
-	readMaxPacketSize int
-	readBuf           chan []byte
+	mtu          int // Max Transmission Unit for both recv and send
+	readDeadline time.Time
+	readBuf      chan []byte
 
 	writeDeadline time.Time
 }
@@ -51,11 +51,33 @@ func (c *Conn) Read(p []byte) (int, error) {
 }
 
 // Write implements the net.Conn Write method.
+// If the size of the buffer is greater than the MTU,
+// the data could still be sent but will be fragmented (not recommended).
 func (c *Conn) Write(p []byte) (int, error) {
 	if c.writeDeadline.Before(time.Now()) && !c.writeDeadline.IsZero() {
 		return 0, os.ErrDeadlineExceeded
 	}
-	return c.dataChannel.Write(p)
+
+	var written int
+	if len(p) > c.mtu {
+		// split into multiple packets then write
+		for len(p) > c.mtu {
+			var err error
+			segment_written, err := c.dataChannel.Write(p[:c.mtu])
+			written += segment_written
+			if err != nil {
+				return written, err
+			}
+			p = p[c.mtu:]
+		}
+	}
+
+	// write the remaining bytes
+	segment_written, err := c.dataChannel.Write(p)
+	written += segment_written
+
+	return written, err
+
 }
 
 // Close implements the net.Conn Close method.
@@ -94,9 +116,9 @@ func (c *Conn) SetDeadline(deadline time.Time) error {
 
 // SetReadDeadline sets the deadline for future Read calls.
 //
-// A ReadFrom call will fail and return os.ErrDeadlineExceeded
+// A Read call will fail and return os.ErrDeadlineExceeded
 // before attempting to read from the buffer if the deadline has passed.
-// And a ReadFrom call will block till no later than the set read deadline.
+// And a Read call will block till no later than the set read deadline.
 func (c *Conn) SetReadDeadline(deadline time.Time) error {
 	if deadline.Before(time.Now()) && !deadline.IsZero() {
 		return errors.New("deadline is in the past")
@@ -107,7 +129,7 @@ func (c *Conn) SetReadDeadline(deadline time.Time) error {
 
 // SetWriteDeadline sets the deadline for future Write calls.
 //
-// A WriteTo call will fail and return os.ErrDeadlineExceeded
+// A Write call will fail and return os.ErrDeadlineExceeded
 // before attempting to write to the buffer if the deadline has passed.
 // Otherwise the set write deadline will not affect the WriteTo call.
 func (c *Conn) SetWriteDeadline(deadline time.Time) error {
@@ -123,7 +145,7 @@ func (c *Conn) SetWriteDeadline(deadline time.Time) error {
 // Start running in a goroutine once the datachannel is opened.
 func (c *Conn) readLoop() {
 	for {
-		b := make([]byte, c.readMaxPacketSize)
+		b := make([]byte, c.mtu)
 		n, err := c.dataChannel.Read(b)
 		if err != nil {
 			break // Conn failed or closed

@@ -27,7 +27,7 @@ const ()
 // Listener listens for new PeerConnections and saves all incoming datachannel from peers for later use.
 type Listener struct {
 	SignalMethod     SignalMethod
-	MaxReadSize      int
+	MTU              int
 	MaxAcceptTimeout time.Duration
 
 	runningStatus ListenerRunningStatus // Initialized at creation. Atomic. Access via sync/atomic methods only
@@ -161,9 +161,9 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
 				return
 			} else {
 				conn := &Conn{
-					dataChannel:       dc,
-					readMaxPacketSize: l.MaxReadSize,
-					readBuf:           make(chan []byte),
+					dataChannel: dc,
+					mtu:         l.MTU,
+					readBuf:     make(chan []byte),
 				}
 				go conn.readLoop()
 				l.conns <- conn

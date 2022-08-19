@@ -16,7 +16,7 @@ import (
 // If the SignalMethod is set, the Offer/Answer exchange per new PeerConnection will be done automatically.
 type Dialer struct {
 	SignalMethod SignalMethod
-	MaxReadSize  int
+	MTU          int // maximum transmission unit
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
@@ -96,9 +96,9 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 			return nil, errors.New("failed to receive datachannel")
 		}
 		conn := &Conn{
-			dataChannel:       dataChannelDetach,
-			readMaxPacketSize: d.MaxReadSize,
-			readBuf:           make(chan []byte),
+			dataChannel: dataChannelDetach,
+			mtu:         d.MTU,
+			readBuf:     make(chan []byte),
 		}
 		go conn.readLoop() // start the read loop
 

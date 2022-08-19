@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	MAX_READ_SIZE_DEFAULT    = 1024
+	MTU_DEFAULT              = 1024
 	MAX_RECV_TIMEOUT_DEFAULT = time.Second * 10
 )
 
@@ -54,7 +54,7 @@ func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
 
 	return &Dialer{
 		SignalMethod:  SignalMethodManual,
-		MaxReadSize:   MAX_READ_SIZE_DEFAULT,
+		MTU:           MTU_DEFAULT,
 		settingEngine: settingEngine,
 		configuration: pConf,
 	}, nil
@@ -71,7 +71,7 @@ func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 
 	l := &Listener{
 		SignalMethod:     SignalMethodManual,
-		MaxReadSize:      MAX_READ_SIZE_DEFAULT,
+		MTU:              MTU_DEFAULT,
 		MaxAcceptTimeout: MAX_RECV_TIMEOUT_DEFAULT,
 		runningStatus:    LISTENER_NEW,
 		rand:             rand.New(rand.NewSource(time.Now().UnixNano())),
