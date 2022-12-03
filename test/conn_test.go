@@ -105,9 +105,12 @@ func TestWriteToClosedConn(t *testing.T) {
 	rand.Read(longMsg)
 
 	// Write to second Conn - should succeed
-	_, err = cConn2.Write(longMsg)
+	written, err := cConn2.Write(longMsg)
 	if err != nil {
 		t.Fatalf("Write to second Conn error: %v", err)
+	}
+	if written != 65535 {
+		t.Fatalf("Write to second Conn returned %d bytes", written)
 	}
 
 	longRecvBuf := make([]byte, 65540)

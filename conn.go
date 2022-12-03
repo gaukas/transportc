@@ -72,10 +72,10 @@ func (c *Conn) Write(p []byte) (int, error) {
 		for len(wrBuf) > c.mtu {
 			var err error
 			written, err := c.dataChannel.Write(wrBuf[:c.mtu])
-			writtenTotal += written
 			if err != nil {
-				return writtenTotal, err
+				return writtenTotal - 2, err
 			}
+			writtenTotal += written
 			wrBuf = wrBuf[c.mtu:]
 		}
 
@@ -83,7 +83,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 		written, err := c.dataChannel.Write(wrBuf)
 		writtenTotal += written
 
-		return writtenTotal, err
+		return writtenTotal - 2, err
 	}
 
 	return 0, os.ErrDeadlineExceeded
