@@ -113,6 +113,9 @@ func TestWriteToClosedConn(t *testing.T) {
 		t.Fatalf("Write to second Conn returned %d bytes", written)
 	}
 
+	// Write something else to second Conn following the long message
+	_, _ = cConn2.Write([]byte("Hello"))
+
 	longRecvBuf := make([]byte, 65540)
 	// Receive on second Conn - should succeed
 	n, err = sConn2.Read(longRecvBuf)

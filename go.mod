@@ -6,7 +6,6 @@ require (
 	github.com/pion/datachannel v1.5.2
 	github.com/pion/ice/v2 v2.2.12
 	github.com/pion/webrtc/v3 v3.1.49
-	golang.org/x/net v0.2.0
 )
 
 require (
@@ -26,5 +25,6 @@ require (
 	github.com/pion/turn/v2 v2.0.8 // indirect
 	github.com/pion/udp v0.1.1 // indirect
 	golang.org/x/crypto v0.0.0-20221010152910-d6f0a8c073c2 // indirect
+	golang.org/x/net v0.2.0 // indirect
 	golang.org/x/sys v0.2.0 // indirect
 )
