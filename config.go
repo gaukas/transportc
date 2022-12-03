@@ -1,7 +1,6 @@
 package transportc
 
 import (
-	"math/rand"
 	"net"
 	"time"
 
@@ -74,7 +73,6 @@ func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
 		MTU:              MTU_DEFAULT,
 		MaxAcceptTimeout: MAX_RECV_TIMEOUT_DEFAULT,
 		runningStatus:    LISTENER_NEW,
-		rand:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		settingEngine:    settingEngine,
 		configuration:    pConf,
 		peerConnections:  make(map[uint64]*webrtc.PeerConnection),

@@ -31,7 +31,6 @@ type Listener struct {
 	MaxAcceptTimeout time.Duration
 
 	runningStatus ListenerRunningStatus // Initialized at creation. Atomic. Access via sync/atomic methods only
-	rand          *rand.Rand            // Initialized at creation.
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
@@ -235,7 +234,7 @@ func (l *Listener) nextPCID() uint64 {
 
 	var id uint64
 	for {
-		id = uint64(l.rand.Uint64())
+		id = rand.Uint64()                       // skipcq: GSC-G404
 		if _, ok := l.peerConnections[id]; !ok { // not found
 			break // okay to use this ID
 		}
