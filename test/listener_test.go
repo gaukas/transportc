@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gaukas/transportc"
+	"github.com/gaukas/transportc"
 )
 
 func TestAccept(t *testing.T) {

@@ -1,7 +1,7 @@
 package transportc_test
 
 import (
-	"github.com/Gaukas/transportc"
+	"github.com/gaukas/transportc"
 )
 
 var defaultConfig = &transportc.Config{}

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gaukas/transportc"
+	"github.com/gaukas/transportc"
 )
 
 const estimatedSDPLength = 512 // an educated guess of max length

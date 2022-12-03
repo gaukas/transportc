@@ -9,7 +9,7 @@ name = "go"
 enabled = true
 
   [analyzers.meta]
-  import_root = "github.com/Gaukas/transportc"
+  import_root = "github.com/gaukas/transportc"
 
 [[transformers]]
 name = "gofmt"

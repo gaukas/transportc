@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gaukas/transportc"
+	"github.com/gaukas/transportc"
 )
 
 // Negative Test: Write to closed Conn
