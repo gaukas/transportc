@@ -1,14 +1,15 @@
 package transportc
 
 import (
+	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"os"
 	"time"
 
 	"github.com/pion/datachannel"
-	"golang.org/x/net/context"
 )
 
 // Conn is a net.Conn implementation for WebRTC DataChannels.
@@ -54,30 +55,38 @@ func (c *Conn) Read(p []byte) (int, error) {
 // If the size of the buffer is greater than the MTU,
 // the data could still be sent but will be fragmented (not recommended).
 func (c *Conn) Write(p []byte) (int, error) {
-	if c.writeDeadline.Before(time.Now()) && !c.writeDeadline.IsZero() {
-		return 0, os.ErrDeadlineExceeded
+	// count length of p as uint16 (65535 bytes max per message)
+	var n uint32 = uint32(len(p))
+	if n > math.MaxUint16 {
+		return 0, errors.New("message too long, max 65535 bytes")
 	}
+	// build write buffer
+	var wrBuf []byte = make([]byte, n+2) // 2 bytes for length, n bytes for data
+	wrBuf[0] = byte(n >> 8)              // first byte of length (most significant)
+	wrBuf[1] = byte(n)                   // second byte of length (least significant)
+	copy(wrBuf[2:], p)                   // copy data to buffer
 
-	var written int
-	if len(p) > c.mtu {
+	if c.writeDeadline.IsZero() || c.writeDeadline.After(time.Now()) {
+		var writtenTotal int
 		// split into multiple packets then write
-		for len(p) > c.mtu {
+		for len(wrBuf) > c.mtu {
 			var err error
-			segment_written, err := c.dataChannel.Write(p[:c.mtu])
-			written += segment_written
+			written, err := c.dataChannel.Write(wrBuf[:c.mtu])
+			writtenTotal += written
 			if err != nil {
-				return written, err
+				return writtenTotal, err
 			}
-			p = p[c.mtu:]
+			wrBuf = wrBuf[c.mtu:]
 		}
+
+		// write the remaining bytes
+		written, err := c.dataChannel.Write(wrBuf)
+		writtenTotal += written
+
+		return writtenTotal, err
 	}
 
-	// write the remaining bytes
-	segment_written, err := c.dataChannel.Write(p)
-	written += segment_written
-
-	return written, err
-
+	return 0, os.ErrDeadlineExceeded
 }
 
 // Close implements the net.Conn Close method.
@@ -144,12 +153,28 @@ func (c *Conn) SetWriteDeadline(deadline time.Time) error {
 //
 // Start running in a goroutine once the datachannel is opened.
 func (c *Conn) readLoop() {
+READLOOP:
 	for {
 		b := make([]byte, c.mtu)
 		n, err := c.dataChannel.Read(b)
 		if err != nil {
-			break // Conn failed or closed
+			break READLOOP // Conn failed or closed
 		}
-		c.readBuf <- b[:n]
+
+		// read length of message
+		var msgLen uint16 = uint16(b[0])<<8 | uint16(b[1])
+		// create read buffer
+		var rdBuf []byte = make([]byte, 0)
+		// copy data to read buffer
+		rdBuf = append(rdBuf, b[2:n]...)
+		// read remaining data
+		for len(rdBuf) < int(msgLen) {
+			n, err := c.dataChannel.Read(b)
+			if err != nil {
+				break READLOOP // Conn failed or closed
+			}
+			rdBuf = append(rdBuf, b[:n]...)
+		}
+		c.readBuf <- rdBuf[:msgLen]
 	}
 }

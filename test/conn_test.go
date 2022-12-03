@@ -2,6 +2,7 @@ package transportc_test
 
 import (
 	"context"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -96,5 +97,39 @@ func TestWriteToClosedConn(t *testing.T) {
 	}
 	if string(buf[:n]) != "Hello" {
 		t.Fatalf("Read returned %s", string(buf[:n]))
+	}
+
+	// Generate SUPER LONG message
+	longMsg := make([]byte, 65535)
+	// fill the message with random data
+	rand.Read(longMsg)
+
+	// Write to second Conn - should succeed
+	_, err = cConn2.Write(longMsg)
+	if err != nil {
+		t.Fatalf("Write to second Conn error: %v", err)
+	}
+
+	longRecvBuf := make([]byte, 65540)
+	// Receive on second Conn - should succeed
+	n, err = sConn2.Read(longRecvBuf)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	if n != 65535 {
+		t.Fatalf("Read returned %d bytes", n)
+	}
+
+	if string(longRecvBuf[:n]) != string(longMsg) {
+		t.Fatalf("Read returned wrong message on super long")
+	}
+
+	// Write over-length message to second Conn - should fail
+	overLengthMsg := make([]byte, 65536)
+	rand.Read(overLengthMsg)
+	_, err = cConn2.Write(overLengthMsg)
+	if err == nil {
+		t.Fatal("Write over-length message to second Conn should fail")
 	}
 }
