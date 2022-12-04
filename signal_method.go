@@ -60,7 +60,7 @@ func NewDebugSignal(bufferSize int) *DebugSignal {
 // MakeOffer implements SignalMethod.MakeOffer.
 // It writes the SDP offer to offers channel.
 func (ds *DebugSignal) MakeOffer(offerBody []byte) (uint64, error) {
-	id := rand.Uint64()
+	id := rand.Uint64() // skipcq: GSC-G404
 
 	ds.offers <- offer{
 		id:   id,
