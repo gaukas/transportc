@@ -95,7 +95,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	// Generate SUPER LONG message
 	longMsg := make([]byte, 65535)
 	// fill the message with random data
-	rand.Read(longMsg)
+	rand.Read(longMsg) // skipcq: GSC-G404
 
 	// Write to second Conn - should succeed
 	written, err := cConn2.Write(longMsg)
@@ -126,7 +126,7 @@ func TestWriteToClosedConn(t *testing.T) {
 
 	// Write over-length message to second Conn - should fail
 	overLengthMsg := make([]byte, 65536)
-	rand.Read(overLengthMsg)
+	rand.Read(overLengthMsg) // skipcq: GSC-G404
 	_, err = cConn2.Write(overLengthMsg)
 	if err == nil {
 		t.Fatal("Write over-length message to second Conn should fail")
