@@ -25,6 +25,11 @@ type Config struct {
 	// SignalMethod offers the automatic signaling when establishing the DataChannel.
 	SignalMethod SignalMethod
 
+	// MTU defines the maximum size of the data that can be sent in a single packet.
+	// Sending data larger than this (but shorter than MaxUint16) will result in
+	// fragmentation.
+	MTU int
+
 	// IPs includes a slice of IP addresses and one single ICE Candidate Type.
 	// If set, will add these IPs as ICE Candidates
 	IPs *NAT1To1IPs
@@ -42,39 +47,50 @@ type Config struct {
 	// InterfaceFilter restricts ICE agent to gather ICE candidates
 	// on only selected interfaces.
 	InterfaceFilter func(interfaceName string) (allowed bool)
+
+	// WebRTCConfiguration is the configuration for the underlying WebRTC PeerConnection.
+	WebRTCConfiguration webrtc.Configuration
 }
 
 // NewDialer creates a new Dialer from the given configuration.
-func (c *Config) NewDialer(pConf *webrtc.Configuration) (*Dialer, error) {
+func (c *Config) NewDialer() (*Dialer, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
 		return nil, err
 	}
 
+	if c.MTU == 0 {
+		c.MTU = MTU_DEFAULT
+	}
+
 	return &Dialer{
-		SignalMethod:  SignalMethodManual,
-		MTU:           MTU_DEFAULT,
+		SignalMethod:  c.SignalMethod,
+		MTU:           c.MTU,
 		settingEngine: settingEngine,
-		configuration: pConf,
+		configuration: c.WebRTCConfiguration,
 	}, nil
 }
 
 // NewListener creates a new Listener from the given configuration.
-func (c *Config) NewListener(pConf *webrtc.Configuration) (*Listener, error) {
+func (c *Config) NewListener() (*Listener, error) {
 	settingEngine, err := c.BuildSettingEngine()
 	if err != nil {
 		return nil, err
+	}
+
+	if c.MTU == 0 {
+		c.MTU = MTU_DEFAULT
 	}
 
 	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole) // ignore if any error
 
 	l := &Listener{
-		SignalMethod:     SignalMethodManual,
-		MTU:              MTU_DEFAULT,
+		SignalMethod:     c.SignalMethod,
+		MTU:              c.MTU,
 		MaxAcceptTimeout: MAX_RECV_TIMEOUT_DEFAULT,
 		runningStatus:    LISTENER_NEW,
 		settingEngine:    settingEngine,
-		configuration:    pConf,
+		configuration:    c.WebRTCConfiguration,
 		peerConnections:  make(map[uint64]*webrtc.PeerConnection),
 		conns:            make(chan net.Conn),
 		abortAccept:      make(chan bool),

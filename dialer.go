@@ -20,7 +20,7 @@ type Dialer struct {
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
-	configuration *webrtc.Configuration
+	configuration webrtc.Configuration
 
 	// WebRTC PeerConnection
 	mutex          sync.Mutex // mutex makes peerConnection thread-safe
@@ -156,11 +156,7 @@ func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.Dat
 func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel string) (*webrtc.DataChannel, error) {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(d.settingEngine))
 
-	if d.configuration == nil {
-		d.configuration = &webrtc.Configuration{}
-	}
-
-	peerConnection, err := api.NewPeerConnection(*d.configuration)
+	peerConnection, err := api.NewPeerConnection(d.configuration)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +183,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	// Automatic Signalling when possible
 	if d.SignalMethod != nil {
 		var bChan chan bool = make(chan bool)
-
+		var oid uint64
 		// wait for local offer
 		go func(blockingChan chan bool) {
 			err := d.CreateOffer(ctx)
@@ -205,7 +201,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 			if err != nil {
 				return nil, err
 			}
-			err = d.SignalMethod.MakeOffer(offer)
+			oid, err = d.SignalMethod.MakeOffer(offer)
 			if err != nil {
 				return nil, err
 			}
@@ -213,7 +209,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 
 		// wait for answer
 		go func(blockingChan chan bool) {
-			answerBytes, err := d.SignalMethod.GetAnswer()
+			answerBytes, err := d.SignalMethod.GetAnswer(oid)
 			if err != nil {
 				blockingChan <- false
 				return

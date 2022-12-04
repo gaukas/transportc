@@ -5,21 +5,16 @@ import (
 	"math/rand"
 	"testing"
 	"time"
-
-	"github.com/gaukas/transportc"
 )
 
 // Negative Test: Write to closed Conn
 func TestWriteToClosedConn(t *testing.T) {
-	signalMethod := transportc.NewDebugSignal(3)
-
 	// Setup a listener to accept the connection first
 	listener, err := getDefaultListener()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	listener.SignalMethod = signalMethod
 	defer listener.Stop()
 	listener.Start()
 
@@ -28,8 +23,6 @@ func TestWriteToClosedConn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dialer.Close()
-
-	dialer.SignalMethod = signalMethod
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel() // cancel the context to make sure it is done

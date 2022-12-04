@@ -34,7 +34,7 @@ type Listener struct {
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
-	configuration *webrtc.Configuration
+	configuration webrtc.Configuration
 
 	// WebRTC PeerConnection
 	mutex           sync.Mutex                        // mutex makes peerConnection thread-safe
@@ -103,7 +103,7 @@ func (l *Listener) startAcceptLoop() {
 		for atomic.LoadUint32(&l.runningStatus) != LISTENER_STOPPED { // Don't return unless STOPPED
 			for atomic.LoadUint32(&l.runningStatus) == LISTENER_RUNNING { // Only accept new Offers if RUNNING
 				// Accept new Offer from SignalMethod
-				offer, err := l.SignalMethod.GetOffer()
+				offerID, offer, err := l.SignalMethod.GetOffer()
 				if err != nil {
 					continue
 				}
@@ -111,7 +111,7 @@ func (l *Listener) startAcceptLoop() {
 				go func() {
 					ctxTimeout, cancel := context.WithTimeout(context.Background(), l.MaxAcceptTimeout)
 					defer cancel()
-					err := l.nextPeerConnection(ctxTimeout, offer)
+					err := l.nextPeerConnection(ctxTimeout, offerID, offer)
 					if err != nil {
 						return // ignore errors
 					}
@@ -123,14 +123,10 @@ func (l *Listener) startAcceptLoop() {
 	}()
 }
 
-func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
+func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer []byte) error {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(l.settingEngine))
 
-	if l.configuration == nil {
-		l.configuration = &webrtc.Configuration{}
-	}
-
-	peerConnection, err := api.NewPeerConnection(*l.configuration)
+	peerConnection, err := api.NewPeerConnection(l.configuration)
 	if err != nil {
 		return err
 	}
@@ -218,7 +214,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offer []byte) error {
 		if err != nil {
 			return err
 		}
-		err = l.SignalMethod.Answer(answerBytes)
+		err = l.SignalMethod.Answer(offerID, answerBytes)
 		if err != nil {
 			return err
 		}

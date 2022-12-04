@@ -28,7 +28,7 @@ func TestDebugSignal(t *testing.T) {
 		t.Fatalf("Error generating random dummy answer input: %v", err)
 	}
 
-	err = ds.MakeOffer(dummyOfferInput)
+	offerID, err := ds.MakeOffer(dummyOfferInput)
 	if err != nil {
 		t.Fatalf("Error making offer: %v", err)
 	}
@@ -36,7 +36,11 @@ func TestDebugSignal(t *testing.T) {
 	chanOffer := make(chan []byte)
 
 	go func() {
-		offerOutput, _ := ds.GetOffer()
+		oid, offerOutput, _ := ds.GetOffer()
+		if oid != offerID {
+			close(chanOffer)
+			return
+		}
 		chanOffer <- offerOutput
 	}()
 
@@ -51,7 +55,7 @@ func TestDebugSignal(t *testing.T) {
 	}
 	close(chanOffer)
 
-	err = ds.Answer(dummyAnswerInput)
+	err = ds.Answer(offerID, dummyAnswerInput)
 	if err != nil {
 		t.Fatalf("Error answering: %v", err)
 	}
@@ -59,7 +63,7 @@ func TestDebugSignal(t *testing.T) {
 	chanAnswer := make(chan []byte)
 
 	go func() {
-		answerOutput, _ := ds.GetAnswer()
+		answerOutput, _ := ds.GetAnswer(offerID)
 		chanAnswer <- answerOutput
 	}()
 
