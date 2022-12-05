@@ -7,6 +7,8 @@ import (
 	"math"
 	"net"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/datachannel"
@@ -16,9 +18,11 @@ import (
 type Conn struct {
 	dataChannel datachannel.ReadWriteCloser
 
-	mtu          int // Max Transmission Unit for both recv and send
-	readDeadline time.Time
-	readBuf      chan []byte
+	mtu               int // Max Transmission Unit for both recv and send
+	readDeadline      time.Time
+	readBuf           chan []byte
+	readBufCloseMutex sync.RWMutex
+	closed            atomic.Bool
 
 	writeDeadline time.Time
 }
@@ -47,6 +51,10 @@ func (c *Conn) Read(p []byte) (int, error) {
 		if len(b) > len(p) {
 			err = io.ErrShortBuffer
 		}
+		if b == nil {
+			err = io.EOF
+			c.Close()
+		}
 		return copy(p, b), err
 	}
 }
@@ -55,11 +63,22 @@ func (c *Conn) Read(p []byte) (int, error) {
 // If the size of the buffer is greater than the MTU,
 // the data could still be sent but will be fragmented (not recommended).
 func (c *Conn) Write(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, os.ErrClosed
+	}
+
 	// count length of p as uint16 (65535 bytes max per message)
 	var n uint32 = uint32(len(p))
 	if n > math.MaxUint16 {
+		// c.Close()
 		return 0, errors.New("message too long, max 65535 bytes")
 	}
+
+	// write length and data
+	return c.writeWithLen(p, n)
+}
+
+func (c *Conn) writeWithLen(p []byte, n uint32) (int, error) {
 	// build write buffer
 	var wrBuf []byte = make([]byte, n+2) // 2 bytes for length, n bytes for data
 	wrBuf[0] = byte(n >> 8)              // first byte of length (most significant)
@@ -73,6 +92,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 			var err error
 			written, err := c.dataChannel.Write(wrBuf[:c.mtu])
 			if err != nil {
+				// c.Close()
 				return writtenTotal - 2, err
 			}
 			writtenTotal += written
@@ -83,6 +103,9 @@ func (c *Conn) Write(p []byte) (int, error) {
 		written, err := c.dataChannel.Write(wrBuf)
 		writtenTotal += written
 
+		// if err != nil {
+		// 	c.Close()
+		// }
 		return writtenTotal - 2, err
 	}
 
@@ -91,6 +114,12 @@ func (c *Conn) Write(p []byte) (int, error) {
 
 // Close implements the net.Conn Close method.
 func (c *Conn) Close() error {
+	if !c.closed.Load() {
+		c.closed.Store(true)
+		c.readBufCloseMutex.Lock()
+		close(c.readBuf)
+		c.readBufCloseMutex.Unlock()
+	}
 	return c.dataChannel.Close()
 }
 
@@ -175,6 +204,13 @@ READLOOP:
 			}
 			rdBuf = append(rdBuf, b[:n]...)
 		}
-		c.readBuf <- rdBuf[:msgLen]
+		c.readBufCloseMutex.RLock()
+		if !c.closed.Load() {
+			c.readBuf <- rdBuf[:msgLen]
+		} else {
+			break READLOOP
+		}
+		c.readBufCloseMutex.RUnlock()
+		time.Sleep(time.Microsecond * 500)
 	}
 }

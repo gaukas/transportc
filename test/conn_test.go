@@ -131,4 +131,71 @@ func TestWriteToClosedConn(t *testing.T) {
 	if err == nil {
 		t.Fatal("Write over-length message to second Conn should fail")
 	}
+
+	t.Logf("Closing all connections")
+	cConn.Close()
+	cConn2.Close()
+	sConn.Close()
+	sConn2.Close()
+	t.Logf("Prepare to sleep...")
+	time.Sleep(2 * time.Second)
+	t.Logf("After sleep...")
+
+	cConn3, err := dialer.DialContext(ctx, "RANDOM_LABEL_3")
+	if err != nil {
+		t.Fatalf("Third DialContext error: %v", err)
+	}
+	if cConn3 == nil {
+		t.Fatal("Third DialContext returned nil")
+	}
+	defer cConn3.Close()
+
+	sConn3, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("Third Accept error: %v", err)
+	}
+	if sConn3 == nil {
+		t.Fatal("Third Accept returned nil")
+	}
+	defer sConn3.Close()
+
+	// Write to third Conn - should succeed
+	_, err = cConn3.Write([]byte("Hello"))
+	if err != nil {
+		t.Fatalf("Write to third Conn error: %v", err)
+	}
+
+	// Receive on third Conn - should succeed
+	n, err = sConn3.Read(buf)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	if n != 5 {
+		t.Fatalf("Read returned %d bytes", n)
+	}
+
+	if string(buf[:n]) != "Hello" {
+		t.Fatalf("Read returned %s", string(buf[:n]))
+	}
+
+	// Write to third Conn - should succeed
+	_, err = cConn3.Write(longMsg)
+	if err != nil {
+		t.Fatalf("Write to third Conn error: %v", err)
+	}
+
+	// Receive on third Conn - should succeed
+	n, err = sConn3.Read(longRecvBuf)
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+
+	if n != 65535 {
+		t.Fatalf("Read returned %d bytes", n)
+	}
+
+	if string(longRecvBuf[:n]) != string(longMsg) {
+		t.Fatalf("Read returned wrong message on super long")
+	}
 }

@@ -27,6 +27,10 @@ type Dialer struct {
 	peerConnection *webrtc.PeerConnection
 }
 
+var (
+	ErrBrokenDialer = errors.New("dialer need to be recreated")
+)
+
 // Dial connects to a remote peer with SDP-based negotiation.
 //
 // Internally calls DialContext with context.Background().
@@ -73,7 +77,7 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 		// detach from wrapper
 		dc, err := dataChannel.Detach()
 		if err != nil {
-			detachChan <- nil
+			close(detachChan)
 		} else {
 			detachChan <- dc
 		}
@@ -132,16 +136,16 @@ func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.Dat
 	dataChannel, err := d.peerConnection.CreateDataChannel(label, nil)
 	if err != nil {
 		// error: retry after getting a new peer connection.
-		if errors.Is(err, webrtc.ErrConnectionClosed) {
-			d.peerConnection.Close()
-			d.peerConnection = nil
-			dataChannel, err = d.startPeerConnection(ctx, label)
-			if err != nil {
-				return nil, err
-			}
-		} else { // error but not due to PC closed
+		// if errors.Is(err, webrtc.ErrConnectionClosed) {
+		d.peerConnection.Close()
+		d.peerConnection = nil
+		dataChannel, err = d.startPeerConnection(ctx, label)
+		if err != nil {
 			return nil, err
 		}
+		// } else { // error but not due to PC closed
+		// 	return nil, err
+		// }
 	}
 	return dataChannel, nil
 }
@@ -161,15 +165,27 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 		return nil, err
 	}
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		d.mutex.Lock()
-		defer d.mutex.Unlock()
-
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateFailed {
+		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
+			// log.Println("PeerConnection closed!!!")
+			d.mutex.Lock()
 			peerConnection.Close()
 			if d.peerConnection == peerConnection {
 				d.peerConnection = nil
 			}
+			d.mutex.Unlock()
+		}
+	})
+
+	peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
+			// log.Println("ICE died!!!")
+			d.mutex.Lock()
+			peerConnection.Close()
+			if d.peerConnection == peerConnection {
+				d.peerConnection = nil
+			}
+			d.mutex.Unlock()
 		}
 	})
 

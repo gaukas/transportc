@@ -138,13 +138,23 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 	l.mutex.Unlock()
 
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		l.mutex.Lock()
-		defer l.mutex.Unlock()
-
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateDisconnected {
+		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
+			// log.Println("PeerConnection closed!!!")
+			l.mutex.Lock()
 			peerConnection.Close()
 			delete(l.peerConnections, id)
+			l.mutex.Unlock()
+		}
+	})
+
+	peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
+			// log.Println("ICE died!!!")
+			l.mutex.Lock()
+			peerConnection.Close()
+			delete(l.peerConnections, id)
+			l.mutex.Unlock()
 		}
 	})
 
@@ -161,6 +171,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 					readBuf:     make(chan []byte),
 				}
 				go conn.readLoop()
+
 				l.conns <- conn
 			}
 		})
