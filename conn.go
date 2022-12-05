@@ -25,6 +25,9 @@ type Conn struct {
 	closed            atomic.Bool
 
 	writeDeadline time.Time
+
+	idle             atomic.Bool
+	idleKillerTicker *time.Ticker
 }
 
 // Read implements the net.Conn Read method.
@@ -55,6 +58,12 @@ func (c *Conn) Read(p []byte) (int, error) {
 			err = io.EOF
 			c.Close()
 		}
+
+		// Mark as busy if READ succeeded
+		if err == nil {
+			c.idle.Store(false)
+		}
+
 		return copy(p, b), err
 	}
 }
@@ -92,7 +101,6 @@ func (c *Conn) writeWithLen(p []byte, n uint32) (int, error) {
 			var err error
 			written, err := c.dataChannel.Write(wrBuf[:c.mtu])
 			if err != nil {
-				// c.Close()
 				return writtenTotal - 2, err
 			}
 			writtenTotal += written
@@ -103,9 +111,11 @@ func (c *Conn) writeWithLen(p []byte, n uint32) (int, error) {
 		written, err := c.dataChannel.Write(wrBuf)
 		writtenTotal += written
 
-		// if err != nil {
-		// 	c.Close()
-		// }
+		// Mark as busy if WRITE succeeded
+		if err == nil {
+			c.idle.Store(false)
+		}
+
 		return writtenTotal - 2, err
 	}
 
@@ -119,6 +129,10 @@ func (c *Conn) Close() error {
 		c.readBufCloseMutex.Lock()
 		close(c.readBuf)
 		c.readBufCloseMutex.Unlock()
+
+		if c.idleKillerTicker != nil {
+			c.idleKillerTicker.Stop()
+		}
 	}
 	return c.dataChannel.Close()
 }
@@ -213,4 +227,25 @@ READLOOP:
 		c.readBufCloseMutex.RUnlock()
 		time.Sleep(time.Microsecond * 500)
 	}
+}
+
+func (c *Conn) IdleKiller(interval time.Duration) {
+	if interval == 0 {
+		return
+	}
+
+	c.idle.Store(false)
+	c.idleKillerTicker = time.NewTicker(interval)
+
+	go func() {
+		for range c.idleKillerTicker.C {
+			if c.idle.Load() {
+				c.Close()
+				c.idleKillerTicker.Stop()
+				// log.Println("IdleKiller: Connection closed due to inactivity")
+				return
+			}
+			c.idle.Store(true)
+		}
+	}()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"sync"
 
@@ -71,6 +72,12 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 		return nil, err
 	}
 
+	conn := &Conn{
+		dataChannel: nil,
+		mtu:         d.MTU,
+		readBuf:     make(chan []byte),
+	}
+
 	// set event handlers
 	var detachChan chan datachannel.ReadWriteCloser = make(chan datachannel.ReadWriteCloser)
 	dataChannel.OnOpen(func() {
@@ -80,11 +87,13 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 			close(detachChan)
 		} else {
 			detachChan <- dc
+			close(detachChan)
 		}
 	})
 
 	dataChannel.OnClose(func() {
 		// TODO: possibly tear down the PeerConnection if it is the last DataChannel?
+		conn.Close()
 	})
 
 	// OnError won't be used as pion's readLoop is ignored
@@ -99,11 +108,7 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 		if dataChannelDetach == nil {
 			return nil, errors.New("failed to receive datachannel")
 		}
-		conn := &Conn{
-			dataChannel: dataChannelDetach,
-			mtu:         d.MTU,
-			readBuf:     make(chan []byte),
-		}
+		conn.dataChannel = dataChannelDetach
 		go conn.readLoop() // start the read loop
 
 		return conn, nil
@@ -167,7 +172,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		// TODO: handle this better
 		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
-			// log.Println("PeerConnection closed!!!")
+			log.Println("Session (PeerConnection) closed.")
 			d.mutex.Lock()
 			peerConnection.Close()
 			if d.peerConnection == peerConnection {
@@ -177,17 +182,17 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 		}
 	})
 
-	peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
-			// log.Println("ICE died!!!")
-			d.mutex.Lock()
-			peerConnection.Close()
-			if d.peerConnection == peerConnection {
-				d.peerConnection = nil
-			}
-			d.mutex.Unlock()
-		}
-	})
+	// peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+	// 	if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
+	// 		// log.Println("ICE died!!!")
+	// 		d.mutex.Lock()
+	// 		peerConnection.Close()
+	// 		if d.wrappedPeerConnection.pc == peerConnection {
+	// 			d.wrappedPeerConnection = nil
+	// 		}
+	// 		d.mutex.Unlock()
+	// 	}
+	// })
 
 	d.peerConnection = peerConnection
 
