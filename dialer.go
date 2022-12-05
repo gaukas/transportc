@@ -7,9 +7,7 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
 
-	"github.com/gaukas/transportc/internal/utils"
 	"github.com/pion/datachannel"
 	"github.com/pion/webrtc/v3"
 )
