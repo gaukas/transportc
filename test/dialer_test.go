@@ -2,6 +2,7 @@ package transportc_test
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -182,6 +183,7 @@ func BenchmarkSingleDialerDialing(b *testing.B) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel() // cancel the context to make sure it is done
 
+	var conns []net.Conn = []net.Conn{}
 	for i := 0; i < b.N; i++ {
 		conn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
 		if err != nil {
@@ -190,7 +192,20 @@ func BenchmarkSingleDialerDialing(b *testing.B) {
 		if conn == nil {
 			b.Fatal("DialContext returned nil")
 		}
-		defer conn.Close()
-		conn.Write([]byte("Hello"))
+
+		_, err = conn.Write([]byte("Hello"))
+		if err != nil {
+			b.Errorf("1st #%d conn.Write: %v", i, err)
+		}
+
+		conns = append(conns, conn)
+	}
+
+	for i, c := range conns {
+		_, err := c.Write([]byte("HelloWorld"))
+		if err != nil {
+			b.Errorf("2nd #%d conn.Write: %v", i, err)
+		}
+		c.Close()
 	}
 }

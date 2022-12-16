@@ -2,6 +2,7 @@ package transportc_test
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"testing"
 	"time"
@@ -9,8 +10,7 @@ import (
 	"github.com/gaukas/transportc"
 )
 
-// Negative Test: Write to closed Conn
-func TestWriteToClosedConn(t *testing.T) {
+func TestConnComm(t *testing.T) {
 	config := &transportc.Config{
 		Signal: transportc.NewDebugSignal(8),
 	}
@@ -204,4 +204,81 @@ func TestWriteToClosedConn(t *testing.T) {
 	if string(longRecvBuf[:n]) != string(longMsg) {
 		t.Fatalf("Read returned wrong message on super long")
 	}
+}
+
+func BenchmarkSingleConn(b *testing.B) {
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
+	// Setup a listener to accept the connection first
+	listener, err := config.NewListener()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer listener.Stop()
+	listener.Start()
+
+	dialer, err := config.NewDialer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dialer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // cancel the context to make sure it is done
+
+	b.Logf("Dialing...")
+	cConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+	if err != nil {
+		b.Fatalf("DialContext error: %v", err)
+	}
+	if cConn == nil {
+		b.Fatal("DialContext returned nil")
+	}
+
+	b.Logf("Accepting...")
+	sConn, err := listener.Accept()
+	if err != nil {
+		b.Fatalf("Accept error: %v", err)
+	}
+	if sConn == nil {
+		b.Fatal("Accept returned nil")
+	}
+
+	b.Logf("Both connections ready.")
+
+	// goroutine to echo the message received by server
+	go func() {
+		buf := make([]byte, 1024)
+		var byteRecv int = 0
+		sTime := time.Now()
+		for {
+			n, err := sConn.Read(buf)
+			if err != nil {
+				sConn.Close()
+			}
+			if n == 4 && string(buf[:n]) == "GOOD" {
+				break
+			}
+			byteRecv += n
+		}
+		elapse := time.Since(sTime)
+		bandwidth := byteRecv * 1000 / int(elapse.Microseconds())
+		sConn.Write([]byte(fmt.Sprintf("%dKB/s", bandwidth)))
+	}()
+
+	cBuf := make([]byte, 1024)
+	var i int
+	for i = 0; i < b.N; i++ {
+		rand.Read(cBuf) // skipcq: GSC-G404
+		_, err = cConn.Write(cBuf)
+		if err != nil {
+			b.Errorf("Write error: %v", err)
+		}
+	}
+	cConn.Write([]byte("GOOD"))
+	n, _ := cConn.Read(cBuf)
+	b.Logf("Rate: %s", string(cBuf[:n]))
 }
