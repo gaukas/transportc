@@ -1,6 +1,10 @@
 package transportc
 
-import "github.com/pion/webrtc/v3"
+import (
+	"fmt"
+
+	"github.com/pion/webrtc/v3"
+)
 
 // RFC 4347
 type DTLSRole = webrtc.DTLSRole
@@ -30,4 +34,17 @@ type NAT1To1IPs struct {
 type PortRange struct {
 	Min uint16
 	Max uint16
+}
+
+type Addr struct {
+	Hostname string
+	Port     uint16
+}
+
+func (a *Addr) Network() string {
+	return "transportc"
+}
+
+func (a *Addr) String() string {
+	return fmt.Sprintf("%s:%d", a.Hostname, a.Port)
 }

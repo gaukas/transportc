@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
 	"net"
 	"sync"
+	"time"
 
+	"github.com/gaukas/logging"
 	"github.com/pion/datachannel"
 	"github.com/pion/webrtc/v3"
 )
@@ -16,8 +18,9 @@ import (
 //
 // If the SignalMethod is set, the Offer/Answer exchange per new PeerConnection will be done automatically.
 type Dialer struct {
-	SignalMethod SignalMethod
-	MTU          int // maximum transmission unit
+	logger  logging.Logger
+	signal  Signal
+	timeout time.Duration
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
@@ -72,11 +75,7 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 		return nil, err
 	}
 
-	conn := &Conn{
-		dataChannel: nil,
-		mtu:         d.MTU,
-		readBuf:     make(chan []byte),
-	}
+	conn := NewConnD(nil, CONN_D_MAX_CONC)
 
 	// set event handlers
 	var detachChan chan datachannel.ReadWriteCloser = make(chan datachannel.ReadWriteCloser)
@@ -109,7 +108,27 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 			return nil, errors.New("failed to receive datachannel")
 		}
 		conn.dataChannel = dataChannelDetach
-		go conn.readLoop() // start the read loop
+
+		// Set LocalAddr and RemoteAddr
+		if sctp := d.peerConnection.SCTP(); sctp != nil {
+			if dtls := sctp.Transport(); dtls != nil {
+				if ice := dtls.ICETransport(); ice != nil {
+					icePair, err := ice.GetSelectedCandidatePair()
+					if err != nil {
+						return nil, fmt.Errorf("dialer: failed to get selected ICE Candidate pair: %w", err)
+					}
+					conn.localAddr = &Addr{
+						Hostname: icePair.Local.Address,
+						Port:     icePair.Local.Port,
+					}
+					conn.remoteAddr = &Addr{
+						Hostname: icePair.Remote.Address,
+						Port:     icePair.Remote.Port,
+					}
+				}
+			}
+		}
+		go conn.idleloop(d.timeout) // start the read loop
 
 		return conn, nil
 	}
@@ -172,7 +191,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		// TODO: handle this better
 		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
-			log.Println("Session (PeerConnection) closed.")
+			d.logger.Warnf("dialer: PeerConnection failed/closed/disconnected.")
 			d.mutex.Lock()
 			peerConnection.Close()
 			if d.peerConnection == peerConnection {
@@ -182,18 +201,6 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 		}
 	})
 
-	// peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-	// 	if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
-	// 		// log.Println("ICE died!!!")
-	// 		d.mutex.Lock()
-	// 		peerConnection.Close()
-	// 		if d.wrappedPeerConnection.pc == peerConnection {
-	// 			d.wrappedPeerConnection = nil
-	// 		}
-	// 		d.mutex.Unlock()
-	// 	}
-	// })
-
 	d.peerConnection = peerConnection
 
 	dataChannel, err := d.peerConnection.CreateDataChannel(dataChannelLabel, nil)
@@ -202,7 +209,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	}
 
 	// Automatic Signalling when possible
-	if d.SignalMethod != nil {
+	if d.signal != nil {
 		var bChan chan bool = make(chan bool)
 		var oid uint64
 		// wait for local offer
@@ -222,7 +229,7 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 			if err != nil {
 				return nil, err
 			}
-			oid, err = d.SignalMethod.MakeOffer(offer)
+			oid, err = d.signal.Offer(offer)
 			if err != nil {
 				return nil, err
 			}
@@ -230,7 +237,12 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 
 		// wait for answer
 		go func(blockingChan chan bool) {
-			answerBytes, err := d.SignalMethod.GetAnswer(oid)
+			answerBytes, err := d.signal.ReadAnswer(oid)
+			for err == ErrAnswerNotReady {
+				time.Sleep(100 * time.Millisecond)
+				answerBytes, err = d.signal.ReadAnswer(oid)
+			}
+
 			if err != nil {
 				blockingChan <- false
 				return

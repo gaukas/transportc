@@ -5,12 +5,18 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/gaukas/transportc"
 )
 
 // Negative Test: Write to closed Conn
 func TestWriteToClosedConn(t *testing.T) {
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,7 +24,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	defer listener.Stop()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +131,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	}
 
 	// Write over-length message to second Conn - should fail
-	overLengthMsg := make([]byte, 65536)
+	overLengthMsg := make([]byte, 65550)
 	rand.Read(overLengthMsg) // skipcq: GSC-G404
 	_, err = cConn2.Write(overLengthMsg)
 	if err == nil {

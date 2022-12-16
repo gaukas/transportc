@@ -11,25 +11,24 @@ import (
 )
 
 func TestAccept(t *testing.T) {
-	signalMethod := transportc.NewDebugSignal(3)
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
 
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	listener.SignalMethod = signalMethod
 	defer listener.Stop()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dialer.Close()
-
-	dialer.SignalMethod = signalMethod
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel() // cancel the context to make sure it is done
