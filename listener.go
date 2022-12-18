@@ -61,18 +61,8 @@ func (l *Listener) Accept() (net.Conn, error) {
 	return conn, nil
 }
 
-func (l *Listener) Start() error {
-	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_NEW, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_STOPPED, LISTENER_RUNNING) {
-		l.startAcceptLoop()
-		return nil
-	}
-	return errors.New("listener already started")
-}
-
-// Stop the listener. Close existing PeerConnections.
-//
-// The listener can be stopped when it is running or suspended.
-func (l *Listener) Stop() error {
+// Close closes the listener and all peer connections
+func (l *Listener) Close() error {
 	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_STOPPED) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_STOPPED) {
 		l.mutex.Lock()
 		defer l.mutex.Unlock()
@@ -80,18 +70,23 @@ func (l *Listener) Stop() error {
 			pc.Close()
 		}
 		l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
-
+		close(l.conns)
 		return nil
 	}
 	return errors.New("listener already stopped")
 }
 
-// Suspend the listener. Don't close existing PeerConnections.
-func (l *Listener) Suspend() error {
-	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_SUSPENDED) {
+// Addr is unimplemented
+func (l *Listener) Addr() net.Addr {
+	return nil
+}
+
+func (l *Listener) Start() error {
+	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_NEW, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_RUNNING) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_STOPPED, LISTENER_RUNNING) {
+		l.startAcceptLoop()
 		return nil
 	}
-	return errors.New("listener not in running state")
+	return errors.New("listener already started")
 }
 
 // startAcceptLoop() should be called before the first Accept() call.
@@ -151,17 +146,17 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 			l.mutex.Lock()
 			peerConnection.Close()
 			delete(l.peerConnections, id)
-			l.logger.Warnf("User session closed, %d active sessions remain", len(l.peerConnections))
+			l.logger.Infof("User session closed, %d active sessions remain", len(l.peerConnections))
 			l.mutex.Unlock()
 		} else if s == webrtc.PeerConnectionStateConnected {
 			l.mutex.Lock()
-			l.logger.Warnf("User session created, %d active sessions in total", len(l.peerConnections))
+			l.logger.Infof("User session created, %d active sessions in total", len(l.peerConnections))
 			l.mutex.Unlock()
 			go utils.DelayedExecution(l.timeout, func() {
 				pcwg.Wait()
 				l.mutex.Lock()
 				peerConnection.Close()
-				l.logger.Warnf("Closing user session due to idle... ")
+				l.logger.Infof("Closing user session due to idle... ")
 				delete(l.peerConnections, id)
 				l.mutex.Unlock()
 			})
@@ -198,7 +193,6 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 						}
 					}
 				}
-
 				go conn.idleloop(l.timeout)
 				pcwg.Add(1)
 				l.conns <- conn

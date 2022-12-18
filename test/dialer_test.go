@@ -80,7 +80,7 @@ func TestDialContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
 	dialer, err := config.NewDialer()
@@ -120,7 +120,7 @@ func TestDialContextMultipleCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
 	dialer, err := config.NewDialer()
@@ -171,7 +171,7 @@ func BenchmarkSingleDialerDialing(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
 	dialer, err := config.NewDialer()

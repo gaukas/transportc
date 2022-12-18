@@ -59,7 +59,7 @@ func (c *Config) NewDialer() (*Dialer, error) {
 	}
 
 	if c.Logger == nil {
-		c.Logger = logging.DefaultStderrLogger(logging.LOG_INFO)
+		c.Logger = logging.DefaultStderrLogger(logging.LOG_WARN)
 	}
 
 	return &Dialer{
@@ -79,7 +79,7 @@ func (c *Config) NewListener() (*Listener, error) {
 	}
 
 	if c.Logger == nil {
-		c.Logger = logging.DefaultStderrLogger(logging.LOG_INFO)
+		c.Logger = logging.DefaultStderrLogger(logging.LOG_ERROR)
 	}
 
 	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole) // ignore if any error
