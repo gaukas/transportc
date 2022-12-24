@@ -41,7 +41,7 @@ type Addr struct {
 	Port     uint16
 }
 
-func (a *Addr) Network() string {
+func (*Addr) Network() string {
 	return "transportc"
 }
 

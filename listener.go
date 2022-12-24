@@ -83,7 +83,7 @@ func (l *Listener) Close() error {
 }
 
 // Addr is unimplemented
-func (l *Listener) Addr() net.Addr {
+func (*Listener) Addr() net.Addr {
 	return nil
 }
 
@@ -214,7 +214,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 
 	var bChan chan bool = make(chan bool)
 
-	offerUnmarshal := webrtc.SessionDescription{}
+	offerUnmarshal := webrtc.SessionDescription{} // skipcq: GO-W1027
 	err = json.Unmarshal(offer, &offerUnmarshal)
 	if err != nil {
 		return err

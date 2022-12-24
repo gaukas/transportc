@@ -44,7 +44,7 @@ func TestConnComm(t *testing.T) {
 	if cConn == nil {
 		t.Fatal("First DialContext returned nil")
 	}
-	defer cConn.Close()
+	defer cConn.Close() // skipcq: GO-S2307
 
 	sConn, err := listener.Accept()
 	if err != nil {
@@ -53,7 +53,7 @@ func TestConnComm(t *testing.T) {
 	if sConn == nil {
 		t.Fatal("First Accept returned nil")
 	}
-	defer sConn.Close()
+	defer sConn.Close() // skipcq: GO-S2307
 
 	cConn2, err := dialer.DialContext(ctx, "RANDOM_LABEL_2")
 	if err != nil {
@@ -62,7 +62,7 @@ func TestConnComm(t *testing.T) {
 	if cConn2 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer cConn2.Close()
+	defer cConn2.Close() // skipcq: GO-S2307
 
 	sConn2, err := listener.Accept()
 	if err != nil {
@@ -71,7 +71,7 @@ func TestConnComm(t *testing.T) {
 	if sConn2 == nil {
 		t.Fatal("Second Accept returned nil")
 	}
-	defer sConn2.Close()
+	defer sConn2.Close() // skipcq: GO-S2307
 
 	// Close the first Conn
 	cConn.Close()
@@ -157,7 +157,7 @@ func TestConnComm(t *testing.T) {
 	if cConn3 == nil {
 		t.Fatal("Third DialContext returned nil")
 	}
-	defer cConn3.Close()
+	defer cConn3.Close() // skipcq: GO-S2307
 
 	sConn3, err := listener.Accept()
 	if err != nil {
@@ -166,7 +166,7 @@ func TestConnComm(t *testing.T) {
 	if sConn3 == nil {
 		t.Fatal("Third Accept returned nil")
 	}
-	defer sConn3.Close()
+	defer sConn3.Close() // skipcq: GO-S2307
 
 	// Write to third Conn - should succeed
 	_, err = cConn3.Write([]byte("Hello"))

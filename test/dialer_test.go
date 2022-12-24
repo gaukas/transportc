@@ -148,7 +148,7 @@ func TestDialContextMultipleCall(t *testing.T) {
 	if conn2 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer conn2.Close()
+	defer conn2.Close() // skipcq: GO-S2307
 
 	conn3, err := dialer.DialContext(ctx, "RANDOM_LABEL_3")
 	if err != nil {
@@ -157,7 +157,7 @@ func TestDialContextMultipleCall(t *testing.T) {
 	if conn3 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer conn3.Close()
+	defer conn3.Close() // skipcq: GO-S2307
 }
 
 func BenchmarkSingleDialerDialing(b *testing.B) {
