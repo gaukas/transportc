@@ -39,6 +39,13 @@ type Config struct {
 	// PortRange is the range of ports to use for the DataChannel.
 	PortRange *PortRange
 
+	// ReusePeerConnection indicates whether to reuse the same PeerConnection
+	// if possible, when Dialer dials multiple times.
+	//
+	// If set to true, Dialer.Dial() creates a new DataChannel on the same PeerConnection.
+	// Otherwise, Dialer.Dial() negotiates for a new PeerConnection and creates a new DataChannel on it.
+	ReusePeerConnection bool
+
 	// Signal offers the automatic signaling when establishing the DataChannel.
 	Signal Signal
 
@@ -63,11 +70,12 @@ func (c *Config) NewDialer() (*Dialer, error) {
 	}
 
 	return &Dialer{
-		logger:        c.Logger,
-		signal:        c.Signal,
-		timeout:       c.Timeout,
-		settingEngine: settingEngine,
-		configuration: c.WebRTCConfiguration,
+		logger:              c.Logger,
+		signal:              c.Signal,
+		timeout:             c.Timeout,
+		settingEngine:       settingEngine,
+		configuration:       c.WebRTCConfiguration,
+		reusePeerConnection: c.ReusePeerConnection,
 	}, nil
 }
 
@@ -93,6 +101,7 @@ func (c *Config) NewListener() (*Listener, error) {
 		configuration:   c.WebRTCConfiguration,
 		peerConnections: make(map[uint64]*webrtc.PeerConnection),
 		conns:           make(chan net.Conn),
+		closed:          make(chan bool),
 	}
 
 	return l, nil

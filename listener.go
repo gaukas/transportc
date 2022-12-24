@@ -45,7 +45,8 @@ type Listener struct {
 	peerConnections map[uint64]*webrtc.PeerConnection // PCID:PeerConnection pair
 
 	// chan Conn for Accept
-	conns chan net.Conn // Initialized at creation
+	conns  chan net.Conn // Initialized at creation
+	closed chan bool     // Initialized at creation
 }
 
 // Accept accepts a new connection from the listener.
@@ -54,11 +55,15 @@ type Listener struct {
 // These connections are from the pool filled automatically by acceptLoop.
 func (l *Listener) Accept() (net.Conn, error) {
 	// read next from conns
-	conn := <-l.conns
-	if conn == nil {
+	select {
+	case conn := <-l.conns:
+		if conn == nil {
+			return nil, errors.New("listener received nil connection")
+		}
+		return conn, nil
+	case <-l.closed:
 		return nil, errors.New("closed listener can't accept new connections")
 	}
-	return conn, nil
 }
 
 // Close closes the listener and all peer connections
@@ -70,7 +75,8 @@ func (l *Listener) Close() error {
 			pc.Close()
 		}
 		l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
-		close(l.conns)
+		// close(l.conns)
+		close(l.closed)
 		return nil
 	}
 	return errors.New("listener already stopped")
@@ -142,7 +148,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
+		if s > webrtc.PeerConnectionStateConnected {
 			l.mutex.Lock()
 			peerConnection.Close()
 			delete(l.peerConnections, id)
@@ -164,7 +170,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 	})
 
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
-		conn := NewConnD(nil, CONN_D_MAX_CONC)
+		conn := NewConn(nil, CONN_DEFAULT_CONCURRENCY)
 
 		d.OnOpen(func() {
 			// detach from wrapper
