@@ -4,6 +4,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/gaukas/logging"
 	"github.com/pion/ice/v2"
 	"github.com/pion/webrtc/v3"
 )
@@ -15,31 +16,6 @@ const (
 
 // Config is the configuration for the Dialer and Listener.
 type Config struct {
-	// ListenerDTLSRole defines the DTLS role when Listening.
-	// MUST be either DTLSRoleClient or DTLSRoleServer, as defined in RFC4347
-	// DTLSRoleClient will send the ClientHello and start the handshake.
-	// DTLSRoleServer will wait for the ClientHello.
-	ListenerDTLSRole DTLSRole
-
-	/**** OPTIONAL FIELDS ****/
-	// SignalMethod offers the automatic signaling when establishing the DataChannel.
-	SignalMethod SignalMethod
-
-	// MTU defines the maximum size of the data that can be sent in a single packet.
-	// Sending data larger than this (but shorter than MaxUint16) will result in
-	// fragmentation.
-	MTU int
-
-	// IPs includes a slice of IP addresses and one single ICE Candidate Type.
-	// If set, will add these IPs as ICE Candidates
-	IPs *NAT1To1IPs
-
-	// PortRange is the range of ports to use for the DataChannel.
-	PortRange *PortRange
-
-	// UDPMux allows serving multiple DataChannels over the one or more pre-established UDP socket.
-	UDPMux ice.UDPMux
-
 	// CandidateNetworkTypes restricts ICE agent to gather
 	// on only selected types of networks.
 	CandidateNetworkTypes []webrtc.NetworkType
@@ -47,6 +23,36 @@ type Config struct {
 	// InterfaceFilter restricts ICE agent to gather ICE candidates
 	// on only selected interfaces.
 	InterfaceFilter func(interfaceName string) (allowed bool)
+
+	// IPs includes a slice of IP addresses and one single ICE Candidate Type.
+	// If set, will add these IPs as ICE Candidates
+	IPs *NAT1To1IPs
+
+	// ListenerDTLSRole defines the DTLS role when Listening.
+	// MUST be either DTLSRoleClient or DTLSRoleServer, as defined in RFC4347
+	// DTLSRoleClient will send the ClientHello and start the handshake.
+	// DTLSRoleServer will wait for the ClientHello.
+	ListenerDTLSRole DTLSRole
+
+	Logger logging.Logger
+
+	// PortRange is the range of ports to use for the DataChannel.
+	PortRange *PortRange
+
+	// ReusePeerConnection indicates whether to reuse the same PeerConnection
+	// if possible, when Dialer dials multiple times.
+	//
+	// If set to true, Dialer.Dial() creates a new DataChannel on the same PeerConnection.
+	// Otherwise, Dialer.Dial() negotiates for a new PeerConnection and creates a new DataChannel on it.
+	ReusePeerConnection bool
+
+	// Signal offers the automatic signaling when establishing the DataChannel.
+	Signal Signal
+
+	Timeout time.Duration
+
+	// UDPMux allows serving multiple DataChannels over the one or more pre-established UDP socket.
+	UDPMux ice.UDPMux
 
 	// WebRTCConfiguration is the configuration for the underlying WebRTC PeerConnection.
 	WebRTCConfiguration webrtc.Configuration
@@ -59,15 +65,17 @@ func (c *Config) NewDialer() (*Dialer, error) {
 		return nil, err
 	}
 
-	if c.MTU == 0 {
-		c.MTU = MTU_DEFAULT
+	if c.Logger == nil {
+		c.Logger = logging.DefaultStderrLogger(logging.LOG_WARN)
 	}
 
 	return &Dialer{
-		SignalMethod:  c.SignalMethod,
-		MTU:           c.MTU,
-		settingEngine: settingEngine,
-		configuration: c.WebRTCConfiguration,
+		logger:              c.Logger,
+		signal:              c.Signal,
+		timeout:             c.Timeout,
+		settingEngine:       settingEngine,
+		configuration:       c.WebRTCConfiguration,
+		reusePeerConnection: c.ReusePeerConnection,
 	}, nil
 }
 
@@ -78,22 +86,22 @@ func (c *Config) NewListener() (*Listener, error) {
 		return nil, err
 	}
 
-	if c.MTU == 0 {
-		c.MTU = MTU_DEFAULT
+	if c.Logger == nil {
+		c.Logger = logging.DefaultStderrLogger(logging.LOG_ERROR)
 	}
 
 	settingEngine.SetAnsweringDTLSRole(c.ListenerDTLSRole) // ignore if any error
 
 	l := &Listener{
-		SignalMethod:     c.SignalMethod,
-		MTU:              c.MTU,
-		MaxAcceptTimeout: MAX_RECV_TIMEOUT_DEFAULT,
-		runningStatus:    LISTENER_NEW,
-		settingEngine:    settingEngine,
-		configuration:    c.WebRTCConfiguration,
-		peerConnections:  make(map[uint64]*webrtc.PeerConnection),
-		conns:            make(chan net.Conn),
-		abortAccept:      make(chan bool),
+		logger:          c.Logger,
+		signal:          c.Signal,
+		timeout:         c.Timeout,
+		runningStatus:   LISTENER_NEW,
+		settingEngine:   settingEngine,
+		configuration:   c.WebRTCConfiguration,
+		peerConnections: make(map[uint64]*webrtc.PeerConnection),
+		conns:           make(chan net.Conn),
+		closed:          make(chan bool),
 	}
 
 	return l, nil

@@ -2,23 +2,32 @@ package transportc_test
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gaukas/transportc"
 )
 
-// Negative Test: Write to closed Conn
-func TestWriteToClosedConn(t *testing.T) {
+func TestConnComm(t *testing.T) {
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +44,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if cConn == nil {
 		t.Fatal("First DialContext returned nil")
 	}
-	defer cConn.Close()
+	defer cConn.Close() // skipcq: GO-S2307
 
 	sConn, err := listener.Accept()
 	if err != nil {
@@ -44,7 +53,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if sConn == nil {
 		t.Fatal("First Accept returned nil")
 	}
-	defer sConn.Close()
+	defer sConn.Close() // skipcq: GO-S2307
 
 	cConn2, err := dialer.DialContext(ctx, "RANDOM_LABEL_2")
 	if err != nil {
@@ -53,7 +62,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if cConn2 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer cConn2.Close()
+	defer cConn2.Close() // skipcq: GO-S2307
 
 	sConn2, err := listener.Accept()
 	if err != nil {
@@ -62,7 +71,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if sConn2 == nil {
 		t.Fatal("Second Accept returned nil")
 	}
-	defer sConn2.Close()
+	defer sConn2.Close() // skipcq: GO-S2307
 
 	// Close the first Conn
 	cConn.Close()
@@ -125,7 +134,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	}
 
 	// Write over-length message to second Conn - should fail
-	overLengthMsg := make([]byte, 65536)
+	overLengthMsg := make([]byte, 65550)
 	rand.Read(overLengthMsg) // skipcq: GSC-G404
 	_, err = cConn2.Write(overLengthMsg)
 	if err == nil {
@@ -148,7 +157,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if cConn3 == nil {
 		t.Fatal("Third DialContext returned nil")
 	}
-	defer cConn3.Close()
+	defer cConn3.Close() // skipcq: GO-S2307
 
 	sConn3, err := listener.Accept()
 	if err != nil {
@@ -157,7 +166,7 @@ func TestWriteToClosedConn(t *testing.T) {
 	if sConn3 == nil {
 		t.Fatal("Third Accept returned nil")
 	}
-	defer sConn3.Close()
+	defer sConn3.Close() // skipcq: GO-S2307
 
 	// Write to third Conn - should succeed
 	_, err = cConn3.Write([]byte("Hello"))
@@ -198,4 +207,305 @@ func TestWriteToClosedConn(t *testing.T) {
 	if string(longRecvBuf[:n]) != string(longMsg) {
 		t.Fatalf("Read returned wrong message on super long")
 	}
+}
+
+// BenchmarkConn benchmarks the performance of the Conn (Client -> Server, unidirectional)
+func BenchmarkConn(b *testing.B) {
+	benchmarkSingleConn(b, 1024)
+	benchmarkSingleConn(b, 2048)
+	benchmarkSingleConn(b, 4096)
+	benchmarkSingleConn(b, 8192)
+	benchmarkMultiConn(b, 1024, 10)
+	benchmarkMultiConn(b, 2048, 10)
+	benchmarkMultiConn(b, 4096, 10)
+	benchmarkMultiConn(b, 8192, 10)
+	// benchmarkMultiConn(b, 1024, 20)
+	// benchmarkMultiConn(b, 2048, 20)
+	// benchmarkMultiConn(b, 4096, 20)
+	// benchmarkMultiConn(b, 8192, 20)
+	benchmarkMultiConnReuse(b, 1024, 10)
+	benchmarkMultiConnReuse(b, 2048, 10)
+	benchmarkMultiConnReuse(b, 4096, 10)
+	benchmarkMultiConnReuse(b, 8192, 10)
+}
+
+func benchmarkSingleConn(b *testing.B, pktSize int) {
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
+	// Setup a listener to accept the connection first
+	listener, err := config.NewListener()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer listener.Close()
+	listener.Start()
+
+	dialer, err := config.NewDialer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dialer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // cancel the context to make sure it is done
+
+	cConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+	if err != nil {
+		b.Fatalf("DialContext error: %v", err)
+	}
+	if cConn == nil {
+		b.Fatal("DialContext returned nil")
+	}
+
+	sConn, err := listener.Accept()
+	if err != nil {
+		b.Fatalf("Accept error: %v", err)
+	}
+	if sConn == nil {
+		b.Fatal("Accept returned nil")
+	}
+
+	// goroutine to echo the message received by server
+	go func() {
+		buf := make([]byte, 65536)
+		var byteRecv int = 0
+		var msgCntr int = 0
+		sTime := time.Now()
+		for {
+			n, err := sConn.Read(buf)
+			if err != nil {
+				sConn.Close()
+			}
+			if n == 4 && string(buf[:n]) == "GOOD" {
+				break
+			}
+			byteRecv += n
+			msgCntr++
+		}
+		elapse := time.Since(sTime)
+		lat := float64(elapse.Microseconds()) / float64(msgCntr)
+		bandwidth := byteRecv / int(elapse.Microseconds())
+		sConn.Write([]byte(fmt.Sprintf("Bw: %dMB/s, Lat: %.2fus", bandwidth, lat)))
+	}()
+
+	cBuf := make([]byte, pktSize)
+	var i int
+	for i = 0; i < 10000; i++ {
+		rand.Read(cBuf) // skipcq: GSC-G404
+		_, err = cConn.Write(cBuf)
+		if err != nil {
+			b.Errorf("Write error: %v", err)
+		}
+	}
+	cConn.Write([]byte("GOOD"))
+	n, _ := cConn.Read(cBuf)
+	b.Logf("%dKB Test, 10000 round(s), %s", pktSize/1024, string(cBuf[:n]))
+}
+
+func benchmarkMultiConn(b *testing.B, pktSize int, multi int) {
+	config := &transportc.Config{
+		Signal:              transportc.NewDebugSignal(8),
+		ReusePeerConnection: false,
+	}
+
+	// Setup a listener to accept the connection first
+	listener, err := config.NewListener()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer listener.Close()
+	listener.Start()
+
+	wg := &sync.WaitGroup{}
+	bw := &atomic.Uint64{}  // KB/s
+	lat := &atomic.Uint64{} // us
+	cond := &sync.WaitGroup{}
+	cond.Add(multi*2 + 1)
+
+	go func(l net.Listener) {
+		for {
+			sConn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			if sConn != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					buf := make([]byte, 65536)
+					var byteRecv int = 0
+					var msgCntr int = 0
+					cond.Done()
+					cond.Wait()
+					sTime := time.Now()
+					for {
+						n, err := sConn.Read(buf)
+						if err != nil {
+							sConn.Close()
+						}
+						if n == 4 && string(buf[:n]) == "GOOD" {
+							break
+						}
+						byteRecv += n
+						msgCntr++
+					}
+					elapse := time.Since(sTime)
+					if msgCntr > 0 {
+						lat.Add(uint64(elapse.Microseconds()) / uint64(msgCntr))
+					}
+					localBw := byteRecv * 1000 / int(elapse.Microseconds())
+					bw.Add(uint64(localBw))
+				}()
+			}
+		}
+	}(listener)
+
+	dialer, err := config.NewDialer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dialer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // cancel the context to make sure it is done
+
+	// Create a dummy conn to make sure the dialer and listener are both ready
+	dummyConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+	if err != nil {
+		b.Fatal("Can't create dummy conn. Fail.")
+	}
+
+	for i := 0; i < multi; i++ {
+		go func() {
+			cConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+			if err != nil {
+				return
+			}
+
+			cBuf := make([]byte, pktSize)
+			var i int
+			cond.Done()
+			cond.Wait()
+			for i = 0; i < 10000/multi; i++ {
+				rand.Read(cBuf) // skipcq: GSC-G404
+				_, err = cConn.Write(cBuf)
+				if err != nil {
+					b.Errorf("Write error: %v", err)
+				}
+			}
+			cConn.Write([]byte("GOOD"))
+		}()
+	}
+	dummyConn.Write([]byte("GOOD"))
+	time.Sleep(2 * time.Second)
+
+	wg.Wait()
+	listener.Close()
+	b.Logf("%d Dedicated Connections, %dKB Test, %d round(s) each, Bw: %dMB/s, Lat: %dus", multi, pktSize/1024, 10000/multi, bw.Load()/1024, lat.Load()/uint64(multi))
+}
+
+func benchmarkMultiConnReuse(b *testing.B, pktSize int, multi int) {
+	config := &transportc.Config{
+		Signal:              transportc.NewDebugSignal(8),
+		ReusePeerConnection: true,
+	}
+
+	// Setup a listener to accept the connection first
+	listener, err := config.NewListener()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer listener.Close()
+	listener.Start()
+
+	wg := &sync.WaitGroup{}
+	bw := &atomic.Uint64{}  // KB/s
+	lat := &atomic.Uint64{} // us
+	cond := &sync.WaitGroup{}
+	cond.Add(multi*2 + 1)
+
+	go func(l net.Listener) {
+		for {
+			sConn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			if sConn != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					buf := make([]byte, 65536)
+					var byteRecv int = 0
+					var msgCntr int = 0
+					cond.Done()
+					cond.Wait()
+					sTime := time.Now()
+					for {
+						n, err := sConn.Read(buf)
+						if err != nil {
+							sConn.Close()
+						}
+						if n == 4 && string(buf[:n]) == "GOOD" {
+							break
+						}
+						byteRecv += n
+						msgCntr++
+					}
+					elapse := time.Since(sTime)
+					if msgCntr > 0 {
+						lat.Add(uint64(elapse.Microseconds()) / uint64(msgCntr))
+					}
+					localBw := byteRecv * 1000 / int(elapse.Microseconds())
+					bw.Add(uint64(localBw))
+				}()
+			}
+		}
+	}(listener)
+
+	dialer, err := config.NewDialer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dialer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // cancel the context to make sure it is done
+
+	dummyConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+	if err != nil {
+		b.Fatal("Can't create dummy conn. Fail.")
+	}
+
+	for i := 0; i < multi; i++ {
+		go func() {
+			cConn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
+			if err != nil {
+				return
+			}
+
+			cBuf := make([]byte, pktSize)
+			var i int
+			cond.Done()
+			cond.Wait()
+			for i = 0; i < 10000/multi; i++ {
+				rand.Read(cBuf) // skipcq: GSC-G404
+				_, err = cConn.Write(cBuf)
+				if err != nil {
+					b.Errorf("Write error: %v", err)
+				}
+			}
+			cConn.Write([]byte("GOOD"))
+		}()
+	}
+	dummyConn.Write([]byte("GOOD"))
+	time.Sleep(2 * time.Second)
+
+	wg.Wait()
+	listener.Close()
+	b.Logf("%d Reused Connections, %dKB Test, %d round(s) each, Bw: %dMB/s, Lat: %dus", multi, pktSize/1024, 10000/multi, bw.Load()/1024, lat.Load()/uint64(multi))
 }

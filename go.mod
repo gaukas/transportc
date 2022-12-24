@@ -3,6 +3,7 @@ module github.com/gaukas/transportc
 go 1.19
 
 require (
+	github.com/gaukas/logging v0.0.2
 	github.com/pion/datachannel v1.5.2
 	github.com/pion/ice/v2 v2.2.12
 	github.com/pion/webrtc/v3 v3.1.49

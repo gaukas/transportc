@@ -2,6 +2,7 @@ package transportc_test
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -10,7 +11,11 @@ import (
 
 // Negative Test for Dialer.DialContext with an expired context
 func TestDialContextWithDoneContext(t *testing.T) {
-	dialer, err := getDefaultDialer()
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +38,11 @@ func TestDialContextWithDoneContext(t *testing.T) {
 
 // Negative Test for Dialer.DialContext with no answering peer to connect to
 func TestDialContextWithoutPeer(t *testing.T) {
-	dialer, err := getDefaultDialer()
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
+
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,25 +70,24 @@ func TestDialContextWithoutPeer(t *testing.T) {
 
 // Positive Test for Dialer.DialContext with a default answering peer to connect to
 func TestDialContext(t *testing.T) {
-	signalMethod := transportc.NewDebugSignal(1)
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
 
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	listener.SignalMethod = signalMethod
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dialer.Close()
-
-	dialer.SignalMethod = signalMethod
 
 	timeStart := time.Now()
 
@@ -102,25 +110,24 @@ func TestDialContext(t *testing.T) {
 }
 
 func TestDialContextMultipleCall(t *testing.T) {
-	signalMethod := transportc.NewDebugSignal(2)
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
 
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	listener.SignalMethod = signalMethod
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dialer.Close()
-
-	dialer.SignalMethod = signalMethod
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel() // cancel the context to make sure it is done
@@ -141,7 +148,7 @@ func TestDialContextMultipleCall(t *testing.T) {
 	if conn2 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer conn2.Close()
+	defer conn2.Close() // skipcq: GO-S2307
 
 	conn3, err := dialer.DialContext(ctx, "RANDOM_LABEL_3")
 	if err != nil {
@@ -150,32 +157,33 @@ func TestDialContextMultipleCall(t *testing.T) {
 	if conn3 == nil {
 		t.Fatal("Second DialContext returned nil")
 	}
-	defer conn3.Close()
+	defer conn3.Close() // skipcq: GO-S2307
 }
 
 func BenchmarkSingleDialerDialing(b *testing.B) {
-	signalMethod := transportc.NewDebugSignal(1)
+	config := &transportc.Config{
+		Signal: transportc.NewDebugSignal(8),
+	}
 
 	// Setup a listener to accept the connection first
-	listener, err := getDefaultListener()
+	listener, err := config.NewListener()
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	listener.SignalMethod = signalMethod
-	defer listener.Stop()
+	defer listener.Close()
 	listener.Start()
 
-	dialer, err := getDefaultDialer()
+	dialer, err := config.NewDialer()
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer dialer.Close()
-	dialer.SignalMethod = signalMethod
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel() // cancel the context to make sure it is done
 
+	var conns []net.Conn = []net.Conn{}
 	for i := 0; i < b.N; i++ {
 		conn, err := dialer.DialContext(ctx, "RANDOM_LABEL")
 		if err != nil {
@@ -184,7 +192,20 @@ func BenchmarkSingleDialerDialing(b *testing.B) {
 		if conn == nil {
 			b.Fatal("DialContext returned nil")
 		}
-		defer conn.Close()
-		conn.Write([]byte("Hello"))
+
+		_, err = conn.Write([]byte("Hello"))
+		if err != nil {
+			b.Errorf("1st #%d conn.Write: %v", i, err)
+		}
+
+		conns = append(conns, conn)
+	}
+
+	for i, c := range conns {
+		_, err := c.Write([]byte("HelloWorld"))
+		if err != nil {
+			b.Errorf("2nd #%d conn.Write: %v", i, err)
+		}
+		c.Close()
 	}
 }

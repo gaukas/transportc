@@ -2,250 +2,172 @@ package transportc
 
 import (
 	"context"
-	"errors"
 	"io"
-	"math"
 	"net"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/pion/datachannel"
 )
 
-// Conn is a net.Conn implementation for WebRTC DataChannels.
+const (
+	CONN_DEFAULT_MTU         = 65536
+	CONN_IDLE_TIMEOUT        = 30 * time.Second
+	CONN_DEFAULT_CONCURRENCY = 4
+)
+
+// Conn defines a connection based on a dedicated datachannel.
+// Conn interfaces net.Conn.
 type Conn struct {
-	dataChannel datachannel.ReadWriteCloser
+	dataChannel io.ReadWriteCloser
+	localAddr   net.Addr
+	remoteAddr  net.Addr
 
-	mtu               int // Max Transmission Unit for both recv and send
-	readDeadline      time.Time
-	readBuf           chan []byte
-	readBufCloseMutex sync.RWMutex
-	closed            atomic.Bool
+	recvBuf    chan []byte // only readloop may write to or close this channel
+	recvClosed atomic.Bool
 
-	writeDeadline time.Time
+	deadlineRd time.Time
+	deadlineWr time.Time
 
-	idle             atomic.Bool
-	idleKillerTicker *time.Ticker
+	idle atomic.Bool
 }
 
-// Read implements the net.Conn Read method.
-func (c *Conn) Read(p []byte) (int, error) {
-	if c.readDeadline.Before(time.Now()) && !c.readDeadline.IsZero() {
-		return 0, os.ErrDeadlineExceeded
+// BuildConningle builds a Conningle from an existing datachannel.
+func NewConn(dataChannel io.ReadWriteCloser, maxConcurrency int) *Conn {
+	return &Conn{
+		dataChannel: dataChannel,
+		recvBuf:     make(chan []byte, maxConcurrency),
+	}
+}
+
+// Read reads data from the connection (underlying datachannel). It blocks until
+// read deadline is reached, data is received in read buffer or error occurs.
+func (c *Conn) Read(p []byte) (n int, err error) {
+	if c.recvClosed.Load() {
+		return 0, io.EOF
 	}
 
-	var ctx context.Context = context.Background()
-	var cancel context.CancelFunc = func() {}
-	if !c.readDeadline.IsZero() {
-		ctx, cancel = context.WithDeadline(ctx, c.readDeadline)
+	var ctxRead context.Context = context.Background()
+	var cancelRead context.CancelFunc = func() {}
+	if !c.deadlineRd.IsZero() {
+		ctxRead, cancelRead = context.WithDeadline(ctxRead, c.deadlineRd)
 	}
-	defer cancel()
+	defer cancelRead()
 
+	// First select: check if anything readily available.
 	select {
-	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return 0, os.ErrDeadlineExceeded
+	case <-ctxRead.Done(): // if context is done, return error
+		return 0, ctxRead.Err()
+	case buf := <-c.recvBuf: // if anything is in the read buffer, read from it
+		if buf == nil {
+			return 0, io.EOF
 		}
-		return 0, ctx.Err()
-	case b := <-c.readBuf:
-		var err error = nil
-		if len(b) > len(p) {
+		n = copy(p, buf)
+		if n < len(buf) {
 			err = io.ErrShortBuffer
 		}
-		if b == nil {
-			err = io.EOF
-			c.Close()
-		}
-
-		// Mark as busy if READ succeeded
-		if err == nil {
-			c.idle.Store(false)
-		}
-
-		return copy(p, b), err
-	}
-}
-
-// Write implements the net.Conn Write method.
-// If the size of the buffer is greater than the MTU,
-// the data could still be sent but will be fragmented (not recommended).
-func (c *Conn) Write(p []byte) (int, error) {
-	if c.closed.Load() {
-		return 0, os.ErrClosed
-	}
-
-	// count length of p as uint16 (65535 bytes max per message)
-	var n uint32 = uint32(len(p))
-	if n > math.MaxUint16 {
-		// c.Close()
-		return 0, errors.New("message too long, max 65535 bytes")
-	}
-
-	// write length and data
-	return c.writeWithLen(p, n)
-}
-
-func (c *Conn) writeWithLen(p []byte, n uint32) (int, error) {
-	// build write buffer
-	var wrBuf []byte = make([]byte, n+2) // 2 bytes for length, n bytes for data
-	wrBuf[0] = byte(n >> 8)              // first byte of length (most significant)
-	wrBuf[1] = byte(n)                   // second byte of length (least significant)
-	copy(wrBuf[2:], p)                   // copy data to buffer
-
-	if c.writeDeadline.IsZero() || c.writeDeadline.After(time.Now()) {
-		var writtenTotal int
-		// split into multiple packets then write
-		for len(wrBuf) > c.mtu {
-			var err error
-			written, err := c.dataChannel.Write(wrBuf[:c.mtu])
+		return n, err
+	default: // nothing readily available, read from datachannel into recvBuf
+		go func() {
+			buf := make([]byte, CONN_DEFAULT_MTU)
+			n, err := c.dataChannel.Read(buf)
 			if err != nil {
-				return writtenTotal - 2, err
+				c.dataChannel.Close() // immediately close datachannel on error
+				c.recvClosed.Store(true)
+				close(c.recvBuf)
+				return
 			}
-			writtenTotal += written
-			wrBuf = wrBuf[c.mtu:]
-		}
-
-		// write the remaining bytes
-		written, err := c.dataChannel.Write(wrBuf)
-		writtenTotal += written
-
-		// Mark as busy if WRITE succeeded
-		if err == nil {
-			c.idle.Store(false)
-		}
-
-		return writtenTotal - 2, err
+			if c.recvClosed.Load() {
+				return
+			}
+			c.recvBuf <- buf[:n]
+		}()
 	}
 
-	return 0, os.ErrDeadlineExceeded
+	// Second select:
+	select {
+	case <-ctxRead.Done(): // if context is done, return error
+		return 0, ctxRead.Err()
+	case buf := <-c.recvBuf: // if anything is in the read buffer, read from it
+		if buf == nil {
+			return 0, io.EOF
+		}
+		n = copy(p, buf)
+		if n < len(buf) {
+			err = io.ErrShortBuffer
+		}
+		return n, err
+	}
 }
 
-// Close implements the net.Conn Close method.
-func (c *Conn) Close() error {
-	if !c.closed.Load() {
-		c.closed.Store(true)
-		c.readBufCloseMutex.Lock()
-		close(c.readBuf)
-		c.readBufCloseMutex.Unlock()
-
-		if c.idleKillerTicker != nil {
-			c.idleKillerTicker.Stop()
+// Write writes data to the connection (underlying datachannel). It blocks until
+// write deadline is reached, data is accepted by write buffer or error occurs.
+func (c *Conn) Write(p []byte) (n int, err error) {
+	if c.deadlineWr.IsZero() {
+		n, err = c.dataChannel.Write(p)
+		if err == nil || n > 0 {
+			c.idle.Store(false)
 		}
+		return n, err
 	}
+
+	select {
+	case <-time.After(time.Until(c.deadlineWr)):
+		return 0, os.ErrDeadlineExceeded
+	default:
+		n, err = c.dataChannel.Write(p)
+		if err == nil || n > 0 {
+			c.idle.Store(false)
+		}
+		return n, err
+	}
+}
+
+func (c *Conn) Close() error {
 	return c.dataChannel.Close()
 }
 
-// LocalAddr implements the net.Conn LocalAddr method.
-//
-// It is hardcoded to return nil since WebRTC DataChannels are P2P
-// and Local addresses are therefore trivial.
-func (*Conn) LocalAddr() net.Addr {
-	return nil
+// LocalAddr returns the address of Local ICE Candidate
+// selected for the datachannel
+func (c *Conn) LocalAddr() net.Addr {
+	return c.localAddr
 }
 
-// RemoteAddr implements the net.Conn RemoteAddr method.
-//
-// It is hardcoded to return nil since WebRTC DataChannels are P2P
-// and Remote addresses are therefore trivial.
-func (*Conn) RemoteAddr() net.Addr {
-	return nil
+// RemoteAddr returns the address of Remote ICE Candidate
+// selected for the datachannel
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.remoteAddr
 }
 
-// SetDeadline implements the net.Conn SetDeadline method.
-// It sets both read and write deadlines in a single call.
-//
-// See SetReadDeadline and SetWriteDeadline for the behavior of the deadlines.
-func (c *Conn) SetDeadline(deadline time.Time) error {
-	if deadline.Before(time.Now()) && !deadline.IsZero() {
-		return errors.New("deadline is in the past")
-	}
-	c.readDeadline = deadline
-	c.writeDeadline = deadline
+// SetDeadline sets the deadline for future Read and Write calls.
+func (c *Conn) SetDeadline(t time.Time) error {
+	c.deadlineRd = t
+	c.deadlineWr = t
 	return nil
 }
 
 // SetReadDeadline sets the deadline for future Read calls.
-//
-// A Read call will fail and return os.ErrDeadlineExceeded
-// before attempting to read from the buffer if the deadline has passed.
-// And a Read call will block till no later than the set read deadline.
-func (c *Conn) SetReadDeadline(deadline time.Time) error {
-	if deadline.Before(time.Now()) && !deadline.IsZero() {
-		return errors.New("deadline is in the past")
-	}
-	c.readDeadline = deadline
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	c.deadlineRd = t
 	return nil
 }
 
 // SetWriteDeadline sets the deadline for future Write calls.
-//
-// A Write call will fail and return os.ErrDeadlineExceeded
-// before attempting to write to the buffer if the deadline has passed.
-// Otherwise the set write deadline will not affect the WriteTo call.
-func (c *Conn) SetWriteDeadline(deadline time.Time) error {
-	if deadline.Before(time.Now()) && !deadline.IsZero() {
-		return errors.New("deadline is in the past")
-	}
-	c.writeDeadline = deadline
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	c.deadlineWr = t
 	return nil
 }
 
-// readLoop reads from the underlying DataChannel and writes to the readBuf channel.
-//
-// Start running in a goroutine once the datachannel is opened.
-func (c *Conn) readLoop() {
-READLOOP:
+func (c *Conn) idleloop(t time.Duration) {
+	if t == 0 {
+		return // no idle timeout
+	}
+
 	for {
-		b := make([]byte, c.mtu)
-		n, err := c.dataChannel.Read(b)
-		if err != nil {
-			break READLOOP // Conn failed or closed
+		if c.idle.Load() {
+			c.Close()
+			return
 		}
-
-		// read length of message
-		var msgLen uint16 = uint16(b[0])<<8 | uint16(b[1])
-		// create read buffer
-		var rdBuf []byte = make([]byte, 0)
-		// copy data to read buffer
-		rdBuf = append(rdBuf, b[2:n]...)
-		// read remaining data
-		for len(rdBuf) < int(msgLen) {
-			n, err := c.dataChannel.Read(b)
-			if err != nil {
-				break READLOOP // Conn failed or closed
-			}
-			rdBuf = append(rdBuf, b[:n]...)
-		}
-		c.readBufCloseMutex.RLock()
-		if !c.closed.Load() {
-			c.readBuf <- rdBuf[:msgLen]
-		} else {
-			break READLOOP
-		}
-		c.readBufCloseMutex.RUnlock()
-		time.Sleep(time.Microsecond * 500)
+		c.idle.Store(true)
+		time.Sleep(t)
 	}
-}
-
-func (c *Conn) IdleKiller(interval time.Duration) {
-	if interval == 0 {
-		return
-	}
-
-	c.idle.Store(false)
-	c.idleKillerTicker = time.NewTicker(interval)
-
-	go func() {
-		for range c.idleKillerTicker.C {
-			if c.idle.Load() {
-				c.Close()
-				c.idleKillerTicker.Stop()
-				// log.Println("IdleKiller: Connection closed due to inactivity")
-				return
-			}
-			c.idle.Store(true)
-		}
-	}()
 }

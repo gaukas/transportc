@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
 	"net"
 	"sync"
+	"time"
 
+	"github.com/gaukas/logging"
 	"github.com/pion/datachannel"
 	"github.com/pion/webrtc/v3"
 )
@@ -16,16 +18,18 @@ import (
 //
 // If the SignalMethod is set, the Offer/Answer exchange per new PeerConnection will be done automatically.
 type Dialer struct {
-	SignalMethod SignalMethod
-	MTU          int // maximum transmission unit
+	logger  logging.Logger
+	signal  Signal
+	timeout time.Duration
 
 	// WebRTC configuration
 	settingEngine webrtc.SettingEngine
 	configuration webrtc.Configuration
 
 	// WebRTC PeerConnection
-	mutex          sync.Mutex // mutex makes peerConnection thread-safe
-	peerConnection *webrtc.PeerConnection
+	mutex               sync.Mutex // mutex makes peerConnection thread-safe
+	peerConnection      *webrtc.PeerConnection
+	reusePeerConnection bool
 }
 
 var (
@@ -72,11 +76,7 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 		return nil, err
 	}
 
-	conn := &Conn{
-		dataChannel: nil,
-		mtu:         d.MTU,
-		readBuf:     make(chan []byte),
-	}
+	conn := NewConn(nil, CONN_DEFAULT_CONCURRENCY)
 
 	// set event handlers
 	var detachChan chan datachannel.ReadWriteCloser = make(chan datachannel.ReadWriteCloser)
@@ -109,7 +109,27 @@ func (d *Dialer) DialContext(ctx context.Context, label string) (net.Conn, error
 			return nil, errors.New("failed to receive datachannel")
 		}
 		conn.dataChannel = dataChannelDetach
-		go conn.readLoop() // start the read loop
+
+		// Set LocalAddr and RemoteAddr
+		if sctp := d.peerConnection.SCTP(); sctp != nil {
+			if dtls := sctp.Transport(); dtls != nil {
+				if ice := dtls.ICETransport(); ice != nil {
+					icePair, err := ice.GetSelectedCandidatePair()
+					if err != nil {
+						return nil, fmt.Errorf("dialer: failed to get selected ICE Candidate pair: %w", err)
+					}
+					conn.localAddr = &Addr{
+						Hostname: icePair.Local.Address,
+						Port:     icePair.Local.Port,
+					}
+					conn.remoteAddr = &Addr{
+						Hostname: icePair.Remote.Address,
+						Port:     icePair.Remote.Port,
+					}
+				}
+			}
+		}
+		go conn.idleloop(d.timeout) // start the read loop
 
 		return conn, nil
 	}
@@ -129,7 +149,7 @@ func (d *Dialer) Close() error {
 }
 
 func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.DataChannel, error) {
-	if d.peerConnection == nil {
+	if d.peerConnection == nil || !d.reusePeerConnection {
 		dc, err := d.startPeerConnection(ctx, label)
 		if err != nil {
 			return nil, err
@@ -137,7 +157,7 @@ func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.Dat
 		return dc, nil
 	}
 
-	// try getting a new data channel
+	// try getting a new data channel from the existing peer connection
 	dataChannel, err := d.peerConnection.CreateDataChannel(label, nil)
 	if err != nil {
 		// error: retry after getting a new peer connection.
@@ -156,10 +176,11 @@ func (d *Dialer) nextDataChannel(ctx context.Context, label string) (*webrtc.Dat
 }
 
 // startPeerConnection creates a new PeerConnection that can be reused in following Dial calls.
+// If Dialer.signal is set, the Offer/Answer exchange will be done automatically.
 //
-// If SignalMethod is set, the Offer/Answer exchange will be done automatically.
-//
-// It returns the first DataChannel created with the PeerConnection.
+// It returns the first DataChannel created with the PeerConnection. Note: the returned DataChannel
+// is not guaranteed to be open yet.It is caller's responsibility to check the DataChannel's state
+// and handle the OnOpen event.
 //
 // Not thread-safe. Caller MUST hold the mutex before calling this function.
 func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel string) (*webrtc.DataChannel, error) {
@@ -168,11 +189,14 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	peerConnection, err := api.NewPeerConnection(d.configuration)
 	if err != nil {
 		return nil, err
+	} else if peerConnection == nil {
+		return nil, errors.New("dialer: created nil PeerConnection")
 	}
+
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
-			log.Println("Session (PeerConnection) closed.")
+		if s > webrtc.PeerConnectionStateConnected {
+			d.logger.Warnf("dialer: PeerConnection disconnected.")
 			d.mutex.Lock()
 			peerConnection.Close()
 			if d.peerConnection == peerConnection {
@@ -182,18 +206,6 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 		}
 	})
 
-	// peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-	// 	if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
-	// 		// log.Println("ICE died!!!")
-	// 		d.mutex.Lock()
-	// 		peerConnection.Close()
-	// 		if d.wrappedPeerConnection.pc == peerConnection {
-	// 			d.wrappedPeerConnection = nil
-	// 		}
-	// 		d.mutex.Unlock()
-	// 	}
-	// })
-
 	d.peerConnection = peerConnection
 
 	dataChannel, err := d.peerConnection.CreateDataChannel(dataChannelLabel, nil)
@@ -202,63 +214,29 @@ func (d *Dialer) startPeerConnection(ctx context.Context, dataChannelLabel strin
 	}
 
 	// Automatic Signalling when possible
-	if d.SignalMethod != nil {
-		var bChan chan bool = make(chan bool)
-		var oid uint64
-		// wait for local offer
-		go func(blockingChan chan bool) {
-			err := d.CreateOffer(ctx)
-			blockingChan <- (err == nil)
-		}(bChan)
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case status := <-bChan:
-			if !status {
-				return nil, errors.New("failed to create local offer")
-			}
-			offer, err := d.GetOffer()
-			if err != nil {
-				return nil, err
-			}
-			oid, err = d.SignalMethod.MakeOffer(offer)
-			if err != nil {
-				return nil, err
-			}
+	if d.signal != nil {
+		offerID, err := d.SendOffer(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("dialer: failed to send offer: %w", err)
 		}
 
-		// wait for answer
-		go func(blockingChan chan bool) {
-			answerBytes, err := d.SignalMethod.GetAnswer(oid)
-			if err != nil {
-				blockingChan <- false
-				return
-			}
-			err = d.SetAnswer(answerBytes)
-			blockingChan <- (err == nil)
-		}(bChan)
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case status := <-bChan:
-			if !status {
-				return nil, errors.New("failed to receive answer")
-			}
+		err = d.SetAnswer(ctx, offerID)
+		if err != nil {
+			return nil, fmt.Errorf("dialer: failed to set answer: %w", err)
 		}
 	}
 
 	return dataChannel, nil
 }
 
-// CreateOffer creates a local offer and sets it as the local description.
+// SendOffer creates a local offer and sets it as the local description,
+// then signals the offer to the remote peer and return the offer ID.
 //
-// Automatically called by NewPeerConction when SignalMethod is set.
-func (d *Dialer) CreateOffer(ctx context.Context) error {
+// Automatically called by startPeerConnection when Dialer.signal is set.
+func (d *Dialer) SendOffer(ctx context.Context) (uint64, error) {
 	localDescription, err := d.peerConnection.CreateOffer(nil)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("dialer: failed to create local offer: %w", err)
 	}
 
 	// Create channel that is blocked until ICE Gathering is complete
@@ -267,7 +245,7 @@ func (d *Dialer) CreateOffer(ctx context.Context) error {
 	// Sets the LocalDescription, and starts our UDP listeners
 	err = d.peerConnection.SetLocalDescription(localDescription)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("dialer: failed to set local description: %w", err)
 	}
 
 	// Block until ICE Gathering is complete, disabling trickle ICE
@@ -276,30 +254,62 @@ func (d *Dialer) CreateOffer(ctx context.Context) error {
 	// TODO: use OnICECandidate callback instead
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, fmt.Errorf("dialer: context done before ICE gathering complete: %w", ctx.Err())
 	case <-gatherComplete:
-		return nil
+		offer := d.peerConnection.LocalDescription()
+		offerByte, err := json.Marshal(offer)
+		if err != nil {
+			return 0, fmt.Errorf("dialer: failed to marshal local offer: %w", err)
+		}
+
+		offerID, err := d.signal.Offer(offerByte)
+		if err != nil {
+			return 0, fmt.Errorf("dialer: failed to signal local offer: %w", err)
+		}
+
+		return offerID, nil
 	}
 }
 
-// GetOffer returns the local offer.
+// SetAnswer reads the answer from the signaler and sets it as the remote description.
 //
-// Automatically called by NewPeerConction when SignalMethod is set.
-func (d *Dialer) GetOffer() ([]byte, error) {
-	offer := d.peerConnection.LocalDescription()
-	// offer to JSON bytes
-	return json.Marshal(offer)
-}
+// Automatically called by startPeerConnection when Dialer.signal is set.
+func (d *Dialer) SetAnswer(ctx context.Context, offerID uint64) error {
+	var blockingChan chan error = make(chan error)
+	var answerUnmarshal webrtc.SessionDescription
 
-// SetAnswer sets the remote answer.
-//
-// Automatically called by NewPeerConction when SignalMethod is set.
-func (d *Dialer) SetAnswer(answer []byte) error {
-	// answer from JSON bytes
-	answerUnmarshal := webrtc.SessionDescription{}
-	err := json.Unmarshal(answer, &answerUnmarshal)
+	go func(blockingChan chan error, webrtcAnswer *webrtc.SessionDescription) {
+		defer close(blockingChan)
+		answerBytes, err := d.signal.ReadAnswer(offerID)
+		for err == ErrAnswerNotReady {
+			time.Sleep(100 * time.Millisecond)
+			answerBytes, err = d.signal.ReadAnswer(offerID)
+		}
+
+		if err != nil {
+			blockingChan <- fmt.Errorf("dialer: failed to read answer: %w", err)
+			return
+		}
+
+		err = json.Unmarshal(answerBytes, webrtcAnswer)
+		if err != nil {
+			blockingChan <- fmt.Errorf("dialer: failed to unmarshal answer: %w", err)
+			return
+		}
+	}(blockingChan, &answerUnmarshal)
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("dialer: context done before answer received: %w", ctx.Err())
+	case remoteErr := <-blockingChan:
+		if remoteErr != nil {
+			return remoteErr
+		}
+	}
+	err := d.peerConnection.SetRemoteDescription(answerUnmarshal)
 	if err != nil {
-		return err
+		return fmt.Errorf("dialer: failed to set remote description: %w", err)
 	}
-	return d.peerConnection.SetRemoteDescription(answerUnmarshal)
+
+	return nil
 }

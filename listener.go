@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gaukas/logging"
 	"github.com/gaukas/transportc/internal/utils"
 	"github.com/pion/webrtc/v3"
 )
@@ -30,9 +30,9 @@ const (
 
 // Listener listens for new PeerConnections and saves all incoming datachannel from peers for later use.
 type Listener struct {
-	SignalMethod     SignalMethod
-	MTU              int
-	MaxAcceptTimeout time.Duration
+	logger  logging.Logger
+	signal  Signal
+	timeout time.Duration
 
 	runningStatus ListenerRunningStatus // Initialized at creation. Atomic. Access via sync/atomic methods only
 
@@ -45,8 +45,8 @@ type Listener struct {
 	peerConnections map[uint64]*webrtc.PeerConnection // PCID:PeerConnection pair
 
 	// chan Conn for Accept
-	conns       chan net.Conn // Initialized at creation
-	abortAccept chan bool     // Initialized at creation
+	conns  chan net.Conn // Initialized at creation
+	closed chan bool     // Initialized at creation
 }
 
 // Accept accepts a new connection from the listener.
@@ -57,10 +57,34 @@ func (l *Listener) Accept() (net.Conn, error) {
 	// read next from conns
 	select {
 	case conn := <-l.conns:
+		if conn == nil {
+			return nil, errors.New("listener received nil connection")
+		}
 		return conn, nil
-	case <-l.abortAccept:
-		return nil, errors.New("listener stopped")
+	case <-l.closed:
+		return nil, errors.New("closed listener can't accept new connections")
 	}
+}
+
+// Close closes the listener and all peer connections
+func (l *Listener) Close() error {
+	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_STOPPED) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_STOPPED) {
+		l.mutex.Lock()
+		defer l.mutex.Unlock()
+		for _, pc := range l.peerConnections {
+			pc.Close()
+		}
+		l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
+		// close(l.conns)
+		close(l.closed)
+		return nil
+	}
+	return errors.New("listener already stopped")
+}
+
+// Addr is unimplemented
+func (*Listener) Addr() net.Addr {
+	return nil
 }
 
 func (l *Listener) Start() error {
@@ -71,53 +95,28 @@ func (l *Listener) Start() error {
 	return errors.New("listener already started")
 }
 
-// Stop the listener. Close existing PeerConnections.
-//
-// The listener can be stopped when it is running or suspended.
-func (l *Listener) Stop() error {
-	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_STOPPED) || atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_SUSPENDED, LISTENER_STOPPED) {
-		l.mutex.Lock()
-		defer l.mutex.Unlock()
-		for _, pc := range l.peerConnections {
-			pc.Close()
-		}
-		l.peerConnections = make(map[uint64]*webrtc.PeerConnection) // clear map
-
-		return nil
-	}
-	return errors.New("listener already stopped")
-}
-
-// Suspend the listener. Don't close existing PeerConnections.
-func (l *Listener) Suspend() error {
-	if atomic.CompareAndSwapUint32(&l.runningStatus, LISTENER_RUNNING, LISTENER_SUSPENDED) {
-		return nil
-	}
-	return errors.New("listener not in running state")
-}
-
 // startAcceptLoop() should be called before the first Accept() call.
 func (l *Listener) startAcceptLoop() {
-	if l.SignalMethod == SignalMethodManual {
+	if l.signal == nil {
 		return // nothing to do for manual signaling (nil)
 	}
 
-	if l.MaxAcceptTimeout == 0 {
-		l.MaxAcceptTimeout = DEFAULT_ACCEPT_TIMEOUT
+	if l.timeout == 0 {
+		l.timeout = DEFAULT_ACCEPT_TIMEOUT
 	}
 
-	// Loop: accept new Offers from SignalMethod and establish new PeerConnections
+	// Loop: accept new Offers from signal and establish new PeerConnections
 	go func() {
 		for atomic.LoadUint32(&l.runningStatus) != LISTENER_STOPPED { // Don't return unless STOPPED
 			for atomic.LoadUint32(&l.runningStatus) == LISTENER_RUNNING { // Only accept new Offers if RUNNING
-				// Accept new Offer from SignalMethod
-				offerID, offer, err := l.SignalMethod.GetOffer()
+				// Accept new Offer from signal
+				offerID, offer, err := l.signal.ReadOffer()
 				if err != nil {
 					continue
 				}
 				// Create new PeerConnection in a goroutine
 				go func() {
-					ctxTimeout, cancel := context.WithTimeout(context.Background(), l.MaxAcceptTimeout)
+					ctxTimeout, cancel := context.WithTimeout(context.Background(), l.timeout)
 					defer cancel()
 					err := l.nextPeerConnection(ctxTimeout, offerID, offer)
 					if err != nil {
@@ -149,44 +148,29 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		// TODO: handle this better
-		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
+		if s > webrtc.PeerConnectionStateConnected {
 			l.mutex.Lock()
 			peerConnection.Close()
 			delete(l.peerConnections, id)
-			log.Printf("User session closed, %d active sessions remains\n", len(l.peerConnections))
+			l.logger.Infof("User session closed, %d active sessions remain", len(l.peerConnections))
 			l.mutex.Unlock()
 		} else if s == webrtc.PeerConnectionStateConnected {
 			l.mutex.Lock()
-			log.Printf("User session created, %d active sessions\n", len(l.peerConnections))
+			l.logger.Infof("User session created, %d active sessions in total", len(l.peerConnections))
 			l.mutex.Unlock()
-			go utils.DelayedExecution(l.MaxAcceptTimeout, func() {
+			go utils.DelayedExecution(l.timeout, func() {
 				pcwg.Wait()
 				l.mutex.Lock()
 				peerConnection.Close()
-				log.Printf("Closing idle user session, %d active sessions remains\n", len(l.peerConnections))
+				l.logger.Infof("Closing user session due to idle... ")
 				delete(l.peerConnections, id)
 				l.mutex.Unlock()
 			})
 		}
 	})
 
-	peerConnection.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		if s == webrtc.ICEConnectionStateFailed || s == webrtc.ICEConnectionStateClosed || s == webrtc.ICEConnectionStateDisconnected {
-			// log.Println("ICE died!!!")
-			l.mutex.Lock()
-			peerConnection.Close()
-			delete(l.peerConnections, id)
-			log.Printf("User session closed, %d active sessions\n", len(l.peerConnections))
-			l.mutex.Unlock()
-		}
-	})
-
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
-		conn := &Conn{
-			dataChannel: nil,
-			mtu:         l.MTU,
-			readBuf:     make(chan []byte),
-		}
+		conn := NewConn(nil, CONN_DEFAULT_CONCURRENCY)
 
 		d.OnOpen(func() {
 			// detach from wrapper
@@ -195,7 +179,27 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 				return
 			} else {
 				conn.dataChannel = dc
-				go conn.readLoop()
+
+				// Set LocalAddr and RemoteAddr
+				if sctp := peerConnection.SCTP(); sctp != nil {
+					if dtls := sctp.Transport(); dtls != nil {
+						if ice := dtls.ICETransport(); ice != nil {
+							icePair, err := ice.GetSelectedCandidatePair()
+							if err != nil {
+								return
+							}
+							conn.localAddr = &Addr{
+								Hostname: icePair.Local.Address,
+								Port:     icePair.Local.Port,
+							}
+							conn.remoteAddr = &Addr{
+								Hostname: icePair.Remote.Address,
+								Port:     icePair.Remote.Port,
+							}
+						}
+					}
+				}
+				go conn.idleloop(l.timeout)
 				pcwg.Add(1)
 				l.conns <- conn
 			}
@@ -210,7 +214,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 
 	var bChan chan bool = make(chan bool)
 
-	offerUnmarshal := webrtc.SessionDescription{}
+	offerUnmarshal := webrtc.SessionDescription{} // skipcq: GO-W1027
 	err = json.Unmarshal(offer, &offerUnmarshal)
 	if err != nil {
 		return err
@@ -252,7 +256,7 @@ func (l *Listener) nextPeerConnection(ctx context.Context, offerID uint64, offer
 		if err != nil {
 			return err
 		}
-		err = l.SignalMethod.Answer(offerID, answerBytes)
+		err = l.signal.Answer(offerID, answerBytes)
 		if err != nil {
 			return err
 		}
