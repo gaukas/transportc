@@ -2,9 +2,12 @@ package transportc
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"math/rand"
+	"math"
+	"math/big"
+	mrand "math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -272,7 +275,14 @@ func (l *Listener) nextPCID() uint64 {
 
 	var id uint64
 	for {
-		id = rand.Uint64()                       // skipcq: GSC-G404
+		n := new(big.Int)
+		randID, err := rand.Int(rand.Reader, n.SetUint64(math.MaxUint64))
+		if err != nil { // fallback to math/rand if crypto/rand fails
+			id = mrand.Uint64() // skipcq: GSC-G404
+		} else {
+			id = randID.Uint64()
+		}
+
 		if _, ok := l.peerConnections[id]; !ok { // not found
 			break // okay to use this ID
 		}

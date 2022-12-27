@@ -1,8 +1,11 @@
 package transportc
 
 import (
+	"crypto/rand"
 	"errors"
-	"math/rand"
+	"math"
+	"math/big"
+	mrand "math/rand"
 	"sync"
 	"time"
 )
@@ -70,7 +73,14 @@ func NewDebugSignal(bufferSize int) *DebugSignal {
 // Offer implements Signal.Offer.
 // It writes the SDP offer to offers channel.
 func (ds *DebugSignal) Offer(offerBody []byte) (uint64, error) {
-	id := rand.Uint64() // skipcq: GSC-G404
+	var id uint64
+	n := new(big.Int)
+	randID, err := rand.Int(rand.Reader, n.SetUint64(math.MaxUint64))
+	if err != nil { // fallback to math/rand if crypto/rand fails
+		id = mrand.Uint64() // skipcq: GSC-G404
+	} else {
+		id = randID.Uint64()
+	}
 
 	ds.offers <- offer{
 		id:   id,
