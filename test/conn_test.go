@@ -2,8 +2,8 @@ package transportc_test
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -104,7 +104,7 @@ func TestConnComm(t *testing.T) {
 	// Generate SUPER LONG message
 	longMsg := make([]byte, 65535)
 	// fill the message with random data
-	rand.Read(longMsg) // skipcq: GSC-G404
+	rand.Read(longMsg)
 
 	// Write to second Conn - should succeed
 	written, err := cConn2.Write(longMsg)
@@ -135,7 +135,7 @@ func TestConnComm(t *testing.T) {
 
 	// Write over-length message to second Conn - should fail
 	overLengthMsg := make([]byte, 65550)
-	rand.Read(overLengthMsg) // skipcq: GSC-G404
+	rand.Read(overLengthMsg)
 	_, err = cConn2.Write(overLengthMsg)
 	if err == nil {
 		t.Fatal("Write over-length message to second Conn should fail")
@@ -294,7 +294,7 @@ func benchmarkSingleConn(b *testing.B, pktSize int) {
 	cBuf := make([]byte, pktSize)
 	var i int
 	for i = 0; i < 10000; i++ {
-		rand.Read(cBuf) // skipcq: GSC-G404
+		rand.Read(cBuf)
 		_, err = cConn.Write(cBuf)
 		if err != nil {
 			b.Errorf("Write error: %v", err)
@@ -391,7 +391,7 @@ func benchmarkMultiConn(b *testing.B, pktSize int, multi int) {
 			cond.Done()
 			cond.Wait()
 			for i = 0; i < 10000/multi; i++ {
-				rand.Read(cBuf) // skipcq: GSC-G404
+				rand.Read(cBuf)
 				_, err = cConn.Write(cBuf)
 				if err != nil {
 					b.Errorf("Write error: %v", err)
@@ -493,7 +493,7 @@ func benchmarkMultiConnReuse(b *testing.B, pktSize int, multi int) {
 			cond.Done()
 			cond.Wait()
 			for i = 0; i < 10000/multi; i++ {
-				rand.Read(cBuf) // skipcq: GSC-G404
+				rand.Read(cBuf)
 				_, err = cConn.Write(cBuf)
 				if err != nil {
 					b.Errorf("Write error: %v", err)
